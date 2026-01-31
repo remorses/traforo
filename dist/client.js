@@ -8,9 +8,11 @@ export class TunnelClient {
     localWsConnections = new Map();
     closed = false;
     constructor(options) {
+        const baseDomain = options.baseDomain || 'traforo.dev';
         this.options = {
             localHost: 'localhost',
-            serverUrl: `wss://${options.tunnelId}-tunnel.kimaki.xyz`,
+            baseDomain,
+            serverUrl: `wss://${options.tunnelId}-tunnel.${baseDomain}`,
             localHttps: false,
             autoReconnect: true,
             reconnectDelay: 3000,
@@ -18,7 +20,7 @@ export class TunnelClient {
         };
     }
     get url() {
-        return `https://${this.options.tunnelId}-tunnel.kimaki.xyz`;
+        return `https://${this.options.tunnelId}-tunnel.${this.options.baseDomain}`;
     }
     async connect() {
         if (this.closed) {

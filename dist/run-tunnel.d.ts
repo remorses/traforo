@@ -3,6 +3,7 @@ export type RunTunnelOptions = {
     port: number;
     tunnelId?: string;
     localHost?: string;
+    baseDomain?: string;
     serverUrl?: string;
     command?: string[];
 };

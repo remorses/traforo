@@ -93,6 +93,7 @@ export async function runTunnel(options) {
         localPort: port,
         tunnelId,
         localHost,
+        ...(options.baseDomain && { baseDomain: options.baseDomain }),
         ...(options.serverUrl && { serverUrl: options.serverUrl }),
     });
     // Handle shutdown

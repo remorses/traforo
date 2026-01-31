@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.5
+
+### Features
+
+- **Parametrizable base domain** - Added `baseDomain` option to client and `-d, --domain` CLI flag
+- **Default domain changed** - Now defaults to `traforo.dev` instead of `kimaki.xyz`
+- **Landing page** - Added simple monospace landing page at traforo.dev
+- **Standalone repo** - Moved to standalone GitHub repo at github.com/remorses/traforo
+
 ## 0.0.4
 
 ### Patch Changes
