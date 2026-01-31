@@ -1,7 +1,7 @@
 /**
  * Integration tests for traforo tunnel.
  *
- * These tests run against the preview deployment at *-tunnel-preview.kimaki.xyz.
+ * These tests run against the preview deployment at *-tunnel-preview.traforo.dev.
  * They start a local test server, connect via TunnelClient, and verify HTTP,
  * WebSocket, and SSE requests work through the tunnel.
  *
@@ -265,8 +265,8 @@ describe('Traforo Tunnel Integration', () => {
   }
   let tunnelClient: TunnelClient
 
-  const tunnelUrl = `https://${tunnelId}-tunnel-preview.kimaki.xyz`
-  const serverUrl = `wss://${tunnelId}-tunnel-preview.kimaki.xyz`
+  const tunnelUrl = `https://${tunnelId}-tunnel-preview.traforo.dev`
+  const serverUrl = `wss://${tunnelId}-tunnel-preview.traforo.dev`
 
   beforeAll(async () => {
     // Start local test server
@@ -965,7 +965,7 @@ describe('Tunnel Status and Offline Behavior', () => {
     'status endpoint shows offline when no client connected',
     async () => {
       const offlineTunnelId = getTunnelId()
-      const statusUrl = `https://${offlineTunnelId}-tunnel-preview.kimaki.xyz/traforo-status`
+      const statusUrl = `https://${offlineTunnelId}-tunnel-preview.traforo.dev/traforo-status`
 
       const res = await fetch(statusUrl)
       expect(res.status).toBe(200)
@@ -981,7 +981,7 @@ describe('Tunnel Status and Offline Behavior', () => {
     'HTTP request to offline tunnel returns 503',
     async () => {
       const offlineTunnelId = getTunnelId()
-      const offlineUrl = `https://${offlineTunnelId}-tunnel-preview.kimaki.xyz/some-path`
+      const offlineUrl = `https://${offlineTunnelId}-tunnel-preview.traforo.dev/some-path`
 
       const res = await fetch(offlineUrl)
       expect(res.status).toBe(503)
@@ -996,7 +996,7 @@ describe('Tunnel Status and Offline Behavior', () => {
     'WebSocket to offline tunnel fails gracefully',
     async () => {
       const offlineTunnelId = getTunnelId()
-      const wsUrl = `wss://${offlineTunnelId}-tunnel-preview.kimaki.xyz/ws`
+      const wsUrl = `wss://${offlineTunnelId}-tunnel-preview.traforo.dev/ws`
       const ws = new WebSocket(wsUrl)
 
       const closeEvent = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
@@ -1027,7 +1027,7 @@ describe('Tunnel Reconnection', () => {
     async () => {
       const reconnectTunnelId = getTunnelId()
       const localPort = 29876 + Math.floor(Math.random() * 1000)
-      const serverUrl = `wss://${reconnectTunnelId}-tunnel-preview.kimaki.xyz`
+      const serverUrl = `wss://${reconnectTunnelId}-tunnel-preview.traforo.dev`
 
       // Start a local server
       const testServer = await createTestServer(localPort)
@@ -1043,7 +1043,7 @@ describe('Tunnel Reconnection', () => {
       await client1.connect()
 
       // Verify tunnel is online
-      const statusUrl = `https://${reconnectTunnelId}-tunnel-preview.kimaki.xyz/traforo-status`
+      const statusUrl = `https://${reconnectTunnelId}-tunnel-preview.traforo.dev/traforo-status`
       const status1 = await fetch(statusUrl)
       const data1 = (await status1.json()) as { online: boolean }
       expect(data1.online).toBe(true)
@@ -1069,7 +1069,7 @@ describe('Tunnel Reconnection', () => {
       expect(data2.online).toBe(true)
 
       // HTTP request should work through new client
-      const tunnelUrl = `https://${reconnectTunnelId}-tunnel-preview.kimaki.xyz`
+      const tunnelUrl = `https://${reconnectTunnelId}-tunnel-preview.traforo.dev`
       const res = await fetch(`${tunnelUrl}/json`)
       expect(res.status).toBe(200)
 
