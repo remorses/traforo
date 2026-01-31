@@ -39,8 +39,7 @@ OPTIONS
     -p, --port <port>       Local port to expose (required)
     -t, --tunnel-id [id]    Tunnel ID (random if omitted)
     -h, --host [host]       Local host (default: localhost)
-    -d, --domain [domain]   Base domain (default: traforo.dev)
-    -s, --server [url]      Custom tunnel server URL (overrides domain)
+    -s, --server [url]      Custom tunnel server URL
     --help                  Show help
     --version               Show version
 
