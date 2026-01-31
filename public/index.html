@@ -1,4 +1,40 @@
-TRAFORO
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>traforo - HTTP tunnels via Cloudflare</title>
+  <meta name="description" content="Expose local servers to the internet with a simple CLI. HTTP tunnel via Cloudflare Durable Objects and WebSockets.">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      background: #fff;
+      color: #111;
+      padding: 2rem 1rem;
+    }
+    pre {
+      max-width: 800px;
+      margin: 0 auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #111;
+        color: #eee;
+      }
+    }
+  </style>
+</head>
+<body>
+  <pre>TRAFORO
 =======
 
 HTTP tunnel via Cloudflare Durable Objects and WebSockets.
@@ -36,7 +72,7 @@ The tunnel URL will be:
 OPTIONS
 -------
 
-    -p, --port <port>       Local port to expose (required)
+    -p, --port &lt;port&gt;       Local port to expose (required)
     -t, --tunnel-id [id]    Tunnel ID (random if omitted)
     -h, --host [host]       Local host (default: localhost)
     -d, --domain [domain]   Base domain (default: traforo.dev)
@@ -81,3 +117,11 @@ LICENSE
 -------
 
 MIT
+
+
+SOURCE
+------
+
+<a href="https://github.com/remorses/traforo">github.com/remorses/traforo</a></pre>
+</body>
+</html>
