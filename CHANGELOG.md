@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.6
+
+### Breaking Changes
+
+- **Remove domain flag** - Removed `-d, --domain` CLI flag as the domain is now fixed/handled differently.
+
+### Styling
+
+- **Landing page** - Reduced max-width of the landing page for better readability.
+
 ## 0.0.5
 
 ### Features
