@@ -6,6 +6,7 @@ import WebSocket from 'ws'
 import type {
   UpstreamMessage,
   DownstreamMessage,
+  ResponseHeaders,
   HttpRequestMessage,
   HttpResponseMessage,
   HttpResponseStartMessage,
@@ -171,11 +172,18 @@ export class TunnelClient {
         body: msg.method !== 'GET' && msg.method !== 'HEAD' ? body : undefined,
       })
 
-      // Build response headers
-      const resHeaders: Record<string, string> = {}
+      // Build response headers, preserving multi-value Set-Cookie
+      const resHeaders: ResponseHeaders = {}
       res.headers.forEach((value, key) => {
+        if (key === 'set-cookie') {
+          return
+        }
         resHeaders[key] = value
       })
+      const cookies = res.headers.getSetCookie()
+      if (cookies.length > 0) {
+        resHeaders['set-cookie'] = cookies.length === 1 ? cookies[0] : cookies
+      }
 
       // Check if we should stream the response
       const contentType = res.headers.get('content-type') || ''

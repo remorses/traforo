@@ -47,12 +47,15 @@ export type UpstreamMessage =
 // Messages: Local Client → Worker/DO
 // ============================================
 
+// Response headers support string arrays for multi-value headers like Set-Cookie
+export type ResponseHeaders = Record<string, string | string[]>
+
 // HTTP response from local server (non-streaming, for small responses)
 export type HttpResponseMessage = {
   type: 'http_response'
   id: string
   status: number
-  headers: Record<string, string>
+  headers: ResponseHeaders
   body: string | null // base64 encoded
 }
 
@@ -61,7 +64,7 @@ export type HttpResponseStartMessage = {
   type: 'http_response_start'
   id: string
   status: number
-  headers: Record<string, string>
+  headers: ResponseHeaders
 }
 
 // HTTP streaming response chunk

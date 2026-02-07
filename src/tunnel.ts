@@ -59,15 +59,11 @@ export default {
       `[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`,
     )
 
-    if (req.method === 'OPTIONS') {
-      return addCors(new Response(null, { status: 204 }))
-    }
-
     // Extract tunnel ID from subdomain: {tunnelId}-tunnel.kimaki.xyz
     const tunnelId = extractTunnelId(host)
     if (!tunnelId) {
       console.log(`[Worker] Invalid tunnel URL: ${host}`)
-      return addCors(new Response('Invalid tunnel URL', { status: 400 }))
+      return new Response('Invalid tunnel URL', { status: 400 })
     }
 
     console.log(`[Worker] tunnelId=${tunnelId}`)
@@ -82,7 +78,7 @@ export default {
     const res = await stub.fetch(new Request(doUrl.toString(), req))
 
     console.log(`[Worker] DO response status=${res.status}`)
-    return addCors(res)
+    return res
   },
 }
 
@@ -495,14 +491,7 @@ export class Tunnel {
       body = base64ToArrayBuffer(msg.body)
     }
 
-    // Build response headers
-    const headers = new Headers()
-    for (const [key, value] of Object.entries(msg.headers)) {
-      if (!isHopByHopHeader(key)) {
-        headers.set(key, value)
-      }
-    }
-
+    const headers = buildHeaders(msg.headers)
     pending.resolve(new Response(body, { status: msg.status, headers }))
   }
 
@@ -515,13 +504,7 @@ export class Tunnel {
     // Remove from pending (we're about to resolve)
     this.pendingHttpRequests.delete(msg.id)
 
-    // Build response headers
-    const headers = new Headers()
-    for (const [key, value] of Object.entries(msg.headers)) {
-      if (!isHopByHopHeader(key)) {
-        headers.set(key, value)
-      }
-    }
+    const headers = buildHeaders(msg.headers)
 
     // Create TransformStream for streaming response
     const { readable, writable } = new TransformStream<Uint8Array>()
@@ -642,17 +625,22 @@ export class Tunnel {
 // Utilities
 // ============================================
 
-function addCors(res: Response): Response {
-  const headers = new Headers(res.headers)
-  headers.set('Access-Control-Allow-Origin', '*')
-  headers.set('Access-Control-Allow-Headers', '*')
-  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-  return new Response(res.body, {
-    status: res.status,
-    statusText: res.statusText,
-    headers,
-    webSocket: (res as Response & { webSocket?: WebSocket }).webSocket,
-  })
+// Rebuild Headers from ResponseHeaders, using append() for multi-value headers (Set-Cookie)
+function buildHeaders(raw: Record<string, string | string[]>): Headers {
+  const headers = new Headers()
+  for (const [key, value] of Object.entries(raw)) {
+    if (isHopByHopHeader(key)) {
+      continue
+    }
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        headers.append(key, v)
+      }
+    } else {
+      headers.set(key, value)
+    }
+  }
+  return headers
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {

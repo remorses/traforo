@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.7
+
+### Bug Fixes
+
+- **Fix multi-value Set-Cookie headers** - Multiple Set-Cookie headers from the local server were collapsed into one, losing all but the last cookie. Response headers now support string arrays so all Set-Cookie values are preserved through the tunnel.
+
+### Improvements
+
+- **Remove CORS header injection** - The tunnel no longer injects `Access-Control-Allow-Origin: *` and related CORS headers on every response. The tunnel is now a transparent proxy that forwards the local server's headers as-is. Previously, the injected CORS headers would overwrite the server's own CORS policy and break `credentials: 'include'` requests.
+- **Forward OPTIONS requests to local server** - OPTIONS preflight requests are now proxied to the local server instead of being short-circuited with a 204 at the tunnel layer. This lets the local server handle its own CORS policy.
+
 ## 0.0.6
 
 ### Breaking Changes
