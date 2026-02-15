@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { cac } from '@xmorse/cac'
+import { goke } from 'goke'
 import { CLI_NAME, runTunnel, parseCommandFromArgv } from './run-tunnel.js'
 
 const { command, argv } = parseCommandFromArgv(process.argv)
 
-const cli = cac(CLI_NAME)
+const cli = goke(CLI_NAME)
 
 cli
   .command('', 'Expose a local port via tunnel')
