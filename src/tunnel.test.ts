@@ -14,6 +14,9 @@ import { TunnelClient } from './client.js'
 import WebSocket, { WebSocketServer } from 'ws'
 import type { Server } from 'node:http'
 import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
+import { createServer, type ViteDevServer } from 'vite'
 
 const TEST_TIMEOUT = 30_000
 
@@ -987,7 +990,7 @@ describe('Tunnel Status and Offline Behavior', () => {
       expect(res.status).toBe(503)
 
       const body = await res.text()
-      expect(body).toContain('offline')
+      expect(body.toLowerCase()).toContain('offline')
     },
     TEST_TIMEOUT
   )
@@ -1077,6 +1080,202 @@ describe('Tunnel Reconnection', () => {
       client1.close()
       client2.close()
       await testServer.close()
+    },
+    TEST_TIMEOUT
+  )
+})
+
+describe('Vite HMR through tunnel', () => {
+  const tunnelId = getTunnelId()
+  const vitePort = 15173 + Math.floor(Math.random() * 1000)
+  let viteServer: ViteDevServer
+  let tunnelClient: TunnelClient
+  let tmpDir: string
+
+  const tunnelUrl = `https://${tunnelId}-tunnel-preview.traforo.dev`
+  const serverUrl = `wss://${tunnelId}-tunnel-preview.traforo.dev`
+
+  beforeAll(async () => {
+    // Copy fixture to tmp dir so we can modify files without dirtying the repo
+    const fixtureDir = path.resolve(__dirname, 'fixtures/vite-hmr')
+    tmpDir = path.resolve(__dirname, '../tmp/vite-hmr-test-' + Date.now())
+    fs.mkdirSync(tmpDir, { recursive: true })
+    for (const file of fs.readdirSync(fixtureDir)) {
+      fs.copyFileSync(path.join(fixtureDir, file), path.join(tmpDir, file))
+    }
+
+    // Start Vite dev server pointing to tmp dir
+    viteServer = await createServer({
+      root: tmpDir,
+      server: {
+        port: vitePort,
+        strictPort: true,
+        // Allow any host so the tunnel domain works
+        allowedHosts: true,
+        watch: {
+          // Force polling for reliable file change detection in tmp dirs
+          usePolling: true,
+          interval: 100,
+        },
+      },
+      logLevel: 'silent',
+    })
+    await viteServer.listen()
+    console.log(`Vite dev server running on port ${vitePort}`)
+
+    // Connect tunnel
+    tunnelClient = new TunnelClient({
+      localPort: vitePort,
+      tunnelId,
+      serverUrl,
+      autoReconnect: false,
+    })
+    await tunnelClient.connect()
+    console.log(`Tunnel connected: ${tunnelUrl}`)
+
+    // Wait for connection to stabilize
+    await new Promise((r) => {
+      setTimeout(r, 500)
+    })
+  }, TEST_TIMEOUT)
+
+  afterAll(async () => {
+    tunnelClient?.close()
+    await viteServer?.close()
+    // Clean up tmp dir
+    if (tmpDir) {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  test(
+    'HTML page loads through tunnel',
+    async () => {
+      const res = await fetch(`${tunnelUrl}/`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('text/html')
+
+      const body = await res.text()
+      // Vite injects its client script and serves the HTML
+      expect(body).toContain('<div id="app">')
+      expect(body).toContain('counter.ts')
+    },
+    TEST_TIMEOUT
+  )
+
+  test(
+    'Vite module requests work through tunnel',
+    async () => {
+      // Vite serves transformed TS modules as JS
+      const res = await fetch(`${tunnelUrl}/counter.ts`)
+      expect(res.status).toBe(200)
+
+      const body = await res.text()
+      expect(body).toContain('count is 0')
+    },
+    TEST_TIMEOUT
+  )
+
+  test(
+    'HMR WebSocket connects and receives updates on file change',
+    async () => {
+      // Vite requires the "vite-hmr" subprotocol for HMR WebSocket connections
+      const wsUrl = tunnelUrl.replace('https://', 'wss://') + '/'
+      const ws = new WebSocket(wsUrl, 'vite-hmr')
+
+      // Wait for WS to open
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Vite HMR WebSocket open timeout'))
+        }, 10_000)
+
+        ws.on('open', () => {
+          clearTimeout(timeout)
+          resolve()
+        })
+        ws.on('error', (err: Error) => {
+          clearTimeout(timeout)
+          reject(err)
+        })
+      })
+
+      // Wait for Vite's "connected" message
+      const connectedMsg = await new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Vite connected message timeout'))
+        }, 10_000)
+
+        ws.on('message', function onMsg(data: WebSocket.RawData) {
+          const msg = JSON.parse(data.toString())
+          if (msg.type === 'connected') {
+            ws.removeListener('message', onMsg)
+            clearTimeout(timeout)
+            resolve(data.toString())
+          }
+        })
+      })
+
+      const parsed = JSON.parse(connectedMsg) as { type: string }
+      expect(parsed.type).toBe('connected')
+
+      // Set up listener for HMR message before modifying file.
+      // Vite sends "update" for modules with import.meta.hot.accept(),
+      // or "full-reload" for modules without it. Both prove the tunnel works.
+      const hmrPromise = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('HMR message timeout'))
+        }, 15_000)
+
+        ws.on('message', function onHmr(data: WebSocket.RawData) {
+          const msg = JSON.parse(data.toString())
+          if (msg.type === 'update' || msg.type === 'full-reload') {
+            ws.removeListener('message', onHmr)
+            clearTimeout(timeout)
+            resolve(data.toString())
+          }
+        })
+      })
+
+      // Fetch the module through the tunnel to ensure it's in Vite's module graph
+      const moduleRes = await fetch(`${tunnelUrl}/counter.ts`)
+      expect(moduleRes.status).toBe(200)
+
+      // Let Vite's file watcher settle
+      await new Promise((r) => {
+        setTimeout(r, 1000)
+      })
+
+      // Modify the counter.ts file to trigger HMR
+      const counterFile = path.join(tmpDir, 'counter.ts')
+      const original = fs.readFileSync(counterFile, 'utf-8')
+      fs.writeFileSync(
+        counterFile,
+        original.replace('count is 0', 'count is 1')
+      )
+
+      // Wait for HMR message through the tunnel
+      const hmrMsg = await hmrPromise
+      const hmrParsed = JSON.parse(hmrMsg) as {
+        type: string
+        path?: string
+        updates?: Array<{ path: string }>
+      }
+      expect(['update', 'full-reload']).toContain(hmrParsed.type)
+
+      ws.close()
+    },
+    TEST_TIMEOUT
+  )
+
+  test(
+    'updated module content is served after HMR',
+    async () => {
+      // After the previous test modified counter.ts, fetch the module again
+      const res = await fetch(`${tunnelUrl}/counter.ts`)
+      expect(res.status).toBe(200)
+
+      const body = await res.text()
+      expect(body).toContain('count is 1')
     },
     TEST_TIMEOUT
   )

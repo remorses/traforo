@@ -128,10 +128,13 @@ export class Tunnel {
         return this.handleUpstreamConnection(tunnelId)
       }
       // User WebSocket connection to be proxied
+      // Include query params (minus _tunnelId) so tokens like ?token=xxx are forwarded
+      url.searchParams.delete('_tunnelId')
+      const wsPath = url.pathname + url.search
       console.log(
-        `[DO] Handling user WS connection for ${tunnelId} path=${url.pathname}`,
+        `[DO] Handling user WS connection for ${tunnelId} path=${wsPath}`,
       )
-      return this.handleUserWsConnection(tunnelId, url.pathname, req.headers)
+      return this.handleUserWsConnection(tunnelId, wsPath, req.headers)
     }
 
     // Status endpoint
@@ -205,6 +208,8 @@ export class Tunnel {
 
     const reqId = crypto.randomUUID()
     const url = new URL(req.url)
+    // Strip internal _tunnelId param so it doesn't leak to the local server
+    url.searchParams.delete('_tunnelId')
 
     // Read request body
     let body: string | null = null
@@ -261,13 +266,25 @@ export class Tunnel {
     path: string,
     reqHeaders: Headers,
   ): Response {
+    // Echo back Sec-WebSocket-Protocol so clients like ws that require
+    // subprotocol negotiation (e.g. "vite-hmr") don't reject the connection
+    const protocol = reqHeaders.get('sec-websocket-protocol')
+    const responseHeaders: Record<string, string> = {}
+    if (protocol) {
+      responseHeaders['Sec-WebSocket-Protocol'] = protocol
+    }
+
     const upstream = this.getUpstream(tunnelId)
     if (!upstream) {
       const pair = new WebSocketPair()
       const [client, server] = Object.values(pair)
       server.accept()
       server.close(4008, 'Tunnel offline')
-      return new Response(null, { status: 101, webSocket: client })
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+        headers: responseHeaders,
+      })
     }
 
     const pair = new WebSocketPair()
@@ -301,7 +318,11 @@ export class Tunnel {
       upstream.send(JSON.stringify(message) satisfies string)
     } catch {
       server.close(4009, 'Failed to contact tunnel')
-      return new Response(null, { status: 101, webSocket: client })
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+        headers: responseHeaders,
+      })
     }
 
     // Set timeout for WS open
@@ -314,7 +335,11 @@ export class Tunnel {
 
     this.pendingWsConnections.set(connId, { userWs: server, timeout })
 
-    return new Response(null, { status: 101, webSocket: client })
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+      headers: responseHeaders,
+    })
   }
 
   // ============================================

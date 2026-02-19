@@ -267,10 +267,16 @@ export class TunnelClient {
     const protocol = localHttps ? 'wss' : 'ws'
     const url = `${protocol}://${localHost}:${localPort}${msg.path}`
 
-    console.log(`WS OPEN ${msg.path} (${msg.connId})`)
+    // Forward WebSocket subprotocol if present (e.g. "vite-hmr")
+    const subprotocol = msg.headers['sec-websocket-protocol']
+    const protocols = subprotocol
+      ? subprotocol.split(',').map((p) => p.trim())
+      : undefined
+
+    console.log(`WS OPEN ${msg.path} (${msg.connId})${protocols ? ` protocols=${protocols}` : ''}`)
 
     try {
-      const localWs = new WebSocket(url)
+      const localWs = new WebSocket(url, protocols)
 
       localWs.on('open', () => {
         console.log(`WS CONNECTED ${msg.connId}`)
