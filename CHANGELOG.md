@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.8
+
+### Bug Fixes
+
+- **WebSocket subprotocol forwarding** - DO now echoes `Sec-WebSocket-Protocol` header in 101 response and client forwards subprotocol to local server. Fixes connections from strict clients like ws library and Vite HMR that require protocol negotiation.
+- **Query param proxying for WebSocket** - WebSocket proxy now forwards query params (e.g. `?token=xxx`) to local server. Previously dropped, breaking authenticated WS connections.
+- **Internal query param leakage** - `_tunnelId` internal param is now stripped from HTTP and WebSocket requests before forwarding to local server.
+
+### Tests
+
+- **Vite HMR integration test** - Added comprehensive test that starts Vite dev server, tunnels it, and verifies HTML serving, module requests, HMR WebSocket connection with vite-hmr protocol, and live file updates.
+
 ## 0.0.7
 
 ### Bug Fixes
