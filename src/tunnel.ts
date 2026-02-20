@@ -62,13 +62,10 @@ export default {
       key: rateLimitKey,
     })
     if (!rateLimitOutcome.success) {
-      const retryAfterSeconds = getRetryAfterSeconds({
-        outcome: rateLimitOutcome,
-      })
       return new Response('Too Many Requests', {
         status: 429,
         headers: {
-          'Retry-After': String(retryAfterSeconds),
+          'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS),
         },
       })
     }
@@ -726,47 +723,6 @@ function getRateLimitKey(req: Request): string {
   }
 
   return 'unknown-client'
-}
-
-function getRetryAfterSeconds({ outcome }: { outcome: RateLimitOutcome }): number {
-  const retryAfterSeconds = extractRetryAfterSecondsFromOutcome({
-    outcome: outcome as unknown as Record<string, unknown>,
-  })
-  if (retryAfterSeconds) {
-    return retryAfterSeconds
-  }
-
-  return RATE_LIMIT_PERIOD_SECONDS
-}
-
-function extractRetryAfterSecondsFromOutcome({
-  outcome,
-}: {
-  outcome: Record<string, unknown>
-}): number | null {
-  const retryAfter = normalizePositiveSeconds({
-    value: outcome['retryAfter'] || outcome['retry_after'],
-  })
-  if (retryAfter) {
-    return retryAfter
-  }
-
-  const reset = normalizePositiveSeconds({
-    value: outcome['reset'],
-  })
-  if (reset) {
-    return reset
-  }
-
-  return null
-}
-
-function normalizePositiveSeconds({ value }: { value: unknown }): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return null
-  }
-
-  return Math.ceil(value)
 }
 
 const html = dedent
