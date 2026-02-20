@@ -20,6 +20,7 @@ import type {
 // Cloudflare-specific types
 export type Env = {
   TUNNEL_DO: DurableObjectNamespace
+  TUNNEL_RATE_LIMITER: RateLimit
 }
 
 type Attachment = {
@@ -47,6 +48,7 @@ type PendingWsConnection = {
 
 const HTTP_TIMEOUT_MS = 30_000
 const WS_OPEN_TIMEOUT_MS = 10_000
+const RATE_LIMIT_PERIOD_SECONDS = 60
 
 // Worker entrypoint
 export default {
@@ -54,6 +56,22 @@ export default {
     const url = new URL(req.url)
     const host = url.hostname
     const isUpgrade = req.headers.get('Upgrade') === 'websocket'
+
+    const rateLimitKey = getRateLimitKey(req)
+    const rateLimitOutcome = await env.TUNNEL_RATE_LIMITER.limit({
+      key: rateLimitKey,
+    })
+    if (!rateLimitOutcome.success) {
+      const retryAfterSeconds = getRetryAfterSeconds({
+        outcome: rateLimitOutcome,
+      })
+      return new Response('Too Many Requests', {
+        status: 429,
+        headers: {
+          'Retry-After': String(retryAfterSeconds),
+        },
+      })
+    }
 
     console.log(
       `[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`,
@@ -699,6 +717,56 @@ const HOP_BY_HOP_HEADERS = new Set([
 
 function isHopByHopHeader(header: string): boolean {
   return HOP_BY_HOP_HEADERS.has(header.toLowerCase())
+}
+
+function getRateLimitKey(req: Request): string {
+  const cfConnectingIp = req.headers.get('CF-Connecting-IP')?.trim()
+  if (cfConnectingIp) {
+    return cfConnectingIp
+  }
+
+  return 'unknown-client'
+}
+
+function getRetryAfterSeconds({ outcome }: { outcome: RateLimitOutcome }): number {
+  const retryAfterSeconds = extractRetryAfterSecondsFromOutcome({
+    outcome: outcome as unknown as Record<string, unknown>,
+  })
+  if (retryAfterSeconds) {
+    return retryAfterSeconds
+  }
+
+  return RATE_LIMIT_PERIOD_SECONDS
+}
+
+function extractRetryAfterSecondsFromOutcome({
+  outcome,
+}: {
+  outcome: Record<string, unknown>
+}): number | null {
+  const retryAfter = normalizePositiveSeconds({
+    value: outcome['retryAfter'] || outcome['retry_after'],
+  })
+  if (retryAfter) {
+    return retryAfter
+  }
+
+  const reset = normalizePositiveSeconds({
+    value: outcome['reset'],
+  })
+  if (reset) {
+    return reset
+  }
+
+  return null
+}
+
+function normalizePositiveSeconds({ value }: { value: unknown }): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null
+  }
+
+  return Math.ceil(value)
 }
 
 const html = dedent

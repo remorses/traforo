@@ -10,6 +10,16 @@
       }
     ]
   },
+  "ratelimits": [
+    {
+      "name": "TUNNEL_RATE_LIMITER",
+      "namespace_id": "42303",
+      "simple": {
+        "limit": 500,
+        "period": 60
+      }
+    }
+  ],
   "migrations": [
     {
       "tag": "v1",
@@ -36,6 +46,16 @@
           }
         ]
       },
+      "ratelimits": [
+        {
+          "name": "TUNNEL_RATE_LIMITER",
+          "namespace_id": "42304",
+          "simple": {
+            "limit": 500,
+            "period": 60
+          }
+        }
+      ],
       "routes": [
         {
           "pattern": "*-tunnel-preview.traforo.dev/*",

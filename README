@@ -18,7 +18,7 @@ Expose a local server:
 
     traforo -p 3000
 
-With a custom tunnel ID:
+With a custom tunnel ID (only for services safe to expose publicly):
 
     traforo -p 3000 -t my-app
 
@@ -37,7 +37,7 @@ OPTIONS
 -------
 
     -p, --port <port>       Local port to expose (required)
-    -t, --tunnel-id [id]    Tunnel ID (random if omitted)
+    -t, --tunnel-id [id]    Custom tunnel ID (prefer random default)
     -h, --host [host]       Local host (default: localhost)
     -s, --server [url]      Custom tunnel server URL
     --help                  Show help

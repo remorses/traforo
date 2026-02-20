@@ -3,6 +3,7 @@ import net from 'node:net'
 import { TunnelClient } from './client.js'
 
 export const CLI_NAME = 'traforo'
+const DEFAULT_TUNNEL_ID_LENGTH = 16
 
 export type RunTunnelOptions = {
   port: number
@@ -75,7 +76,9 @@ export function parseCommandFromArgv(argv: string[]): {
  * Run the tunnel, optionally spawning a child process first.
  */
 export async function runTunnel(options: RunTunnelOptions): Promise<void> {
-  const tunnelId = options.tunnelId || crypto.randomUUID().slice(0, 8)
+  const tunnelId =
+    options.tunnelId ||
+    crypto.randomUUID().replaceAll('-', '').slice(0, DEFAULT_TUNNEL_ID_LENGTH)
   const localHost = options.localHost || 'localhost'
   const port = options.port
 

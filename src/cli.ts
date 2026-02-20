@@ -9,7 +9,10 @@ const cli = goke(CLI_NAME)
 cli
   .command('', 'Expose a local port via tunnel')
   .option('-p, --port <port>', 'Local port to expose (required)')
-  .option('-t, --tunnel-id [id]', 'Tunnel ID (random if omitted)')
+  .option(
+    '-t, --tunnel-id [id]',
+    'Custom tunnel ID (only for services safe to expose publicly; prefer random default)'
+  )
   .option('-h, --host [host]', 'Local host (default: localhost)')
   .option('-s, --server [url]', 'Tunnel server URL')
   .example(`${CLI_NAME} -p 3000`)
