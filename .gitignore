@@ -3,3 +3,12 @@ node_modules/
 .wrangler/
 tmp/
 opensrc/
+
+# E2e framework fixture build artifacts (generated on first dev server run)
+e2e/fixtures/**/.next/
+e2e/fixtures/**/.nuxt/
+e2e/fixtures/**/.svelte-kit/
+e2e/fixtures/**/.astro/
+e2e/fixtures/**/.react-router/
+e2e/fixtures/**/next-env.d.ts
+e2e/node_modules/
