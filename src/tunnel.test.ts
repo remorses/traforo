@@ -63,7 +63,7 @@ function createTestServer(port: number): Promise<{
               headers,
               body: body.length > 0 ? body.toString() : null,
               bodyLength: body.length,
-            })
+            }),
           )
         })
         return
@@ -155,7 +155,9 @@ function createTestServer(port: number): Promise<{
         const maxCount = 5
         const interval = setInterval(() => {
           count++
-          res.write(`data: {"count":${count},"time":"${new Date().toISOString()}"}\n\n`)
+          res.write(
+            `data: {"count":${count},"time":"${new Date().toISOString()}"}\n\n`,
+          )
 
           if (count >= maxCount) {
             clearInterval(interval)
@@ -188,7 +190,7 @@ function createTestServer(port: number): Promise<{
           timestamp: Date.now(),
           connectionCount: wsConnections.size,
           path: url.pathname,
-        })
+        }),
       )
 
       ws.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
@@ -200,7 +202,12 @@ function createTestServer(port: number): Promise<{
 
           // Check for special commands
           if (message === 'GET_CONNECTION_COUNT') {
-            ws.send(JSON.stringify({ type: 'connection_count', count: wsConnections.size }))
+            ws.send(
+              JSON.stringify({
+                type: 'connection_count',
+                count: wsConnections.size,
+              }),
+            )
             return
           }
 
@@ -208,7 +215,12 @@ function createTestServer(port: number): Promise<{
             // Broadcast to all connections including self
             for (const client of wsConnections) {
               if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ type: 'broadcast', message: 'Hello from server!' }))
+                client.send(
+                  JSON.stringify({
+                    type: 'broadcast',
+                    message: 'Hello from server!',
+                  }),
+                )
               }
             }
             return
@@ -220,7 +232,7 @@ function createTestServer(port: number): Promise<{
               type: 'echo',
               message,
               timestamp: Date.now(),
-            })
+            }),
           )
         }
       })
@@ -309,7 +321,7 @@ describe('Traforo Tunnel Integration', () => {
         const body = await res.text()
         expect(body).toContain('<h1>Test Server</h1>')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -323,7 +335,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.status).toBe('ok')
         expect(typeof data.timestamp).toBe('number')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -342,7 +354,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.query.foo).toBe('bar')
         expect(data.query.baz).toBe('123')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -360,7 +372,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.received).toBe(body)
         expect(data.length).toBe(body.length)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -369,7 +381,7 @@ describe('Traforo Tunnel Integration', () => {
         const res = await fetch(`${tunnelUrl}/unknown-path-xyz`)
         expect(res.status).toBe(404)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -386,7 +398,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.headers['x-custom-header']).toBe('test-value')
         expect(data.headers['x-another-header']).toBe('another-value')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -403,7 +415,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.method).toBe('PUT')
         expect(data.body).toBe(body)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -413,7 +425,7 @@ describe('Traforo Tunnel Integration', () => {
         const data = (await res.json()) as { method: string }
         expect(data.method).toBe('DELETE')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -430,7 +442,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.method).toBe('PATCH')
         expect(data.body).toBe(body)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -441,7 +453,7 @@ describe('Traforo Tunnel Integration', () => {
         const body = await res.text()
         expect(body).toBe('')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -452,7 +464,7 @@ describe('Traforo Tunnel Integration', () => {
         const data = (await res.json()) as { error: string }
         expect(data.error).toBe('Internal Server Error')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -464,7 +476,7 @@ describe('Traforo Tunnel Integration', () => {
         const body = await res.text()
         expect(body.length).toBe(size)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -481,7 +493,7 @@ describe('Traforo Tunnel Integration', () => {
         const data = (await res.json()) as { bodyLength: number }
         expect(data.bodyLength).toBe(size)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -506,21 +518,25 @@ describe('Traforo Tunnel Integration', () => {
         expect(responseData.length).toBe(binaryData.length)
         expect(responseData).toEqual(binaryData)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
       'concurrent HTTP requests',
       async () => {
         const requests = Array.from({ length: 5 }, (_, i) => {
-          return fetch(`${tunnelUrl}/echo?request=${i}`).then((res) => res.json())
+          return fetch(`${tunnelUrl}/echo?request=${i}`).then((res) =>
+            res.json(),
+          )
         })
 
-        const results = (await Promise.all(requests)) as Array<{ query: { request: string } }>
+        const results = (await Promise.all(requests)) as Array<{
+          query: { request: string }
+        }>
         const requestIds = results.map((r) => r.query.request).sort()
         expect(requestIds).toEqual(['0', '1', '2', '3', '4'])
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
   })
 
@@ -556,7 +572,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(events.length).toBe(5)
         expect(events.map((e) => e.count)).toEqual([1, 2, 3, 4, 5])
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
   })
 
@@ -587,13 +603,16 @@ describe('Traforo Tunnel Integration', () => {
           })
         })
 
-        const parsed = JSON.parse(welcomeMessage) as { type: string; timestamp: number }
+        const parsed = JSON.parse(welcomeMessage) as {
+          type: string
+          timestamp: number
+        }
         expect(parsed.type).toBe('connected')
         expect(typeof parsed.timestamp).toBe('number')
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -636,13 +655,16 @@ describe('Traforo Tunnel Integration', () => {
           })
         })
 
-        const parsed = JSON.parse(echoResponse) as { type: string; message: string }
+        const parsed = JSON.parse(echoResponse) as {
+          type: string
+          message: string
+        }
         expect(parsed.type).toBe('echo')
         expect(parsed.message).toBe(testMessage)
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -674,7 +696,10 @@ describe('Traforo Tunnel Integration', () => {
         const responses: string[] = []
 
         ws.on('message', (data: WebSocket.RawData) => {
-          const parsed = JSON.parse(data.toString()) as { type: string; message: string }
+          const parsed = JSON.parse(data.toString()) as {
+            type: string
+            message: string
+          }
           if (parsed.type === 'echo') {
             responses.push(parsed.message)
           }
@@ -696,7 +721,7 @@ describe('Traforo Tunnel Integration', () => {
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -722,9 +747,14 @@ describe('Traforo Tunnel Integration', () => {
             })
 
             ws.once('message', (data: WebSocket.RawData) => {
-              const parsed = JSON.parse(data.toString()) as { type: string; connectionCount: number }
+              const parsed = JSON.parse(data.toString()) as {
+                type: string
+                connectionCount: number
+              }
               if (parsed.type === 'connected') {
-                welcomeMessages.push({ connectionCount: parsed.connectionCount })
+                welcomeMessages.push({
+                  connectionCount: parsed.connectionCount,
+                })
               }
               resolve()
             })
@@ -750,7 +780,7 @@ describe('Traforo Tunnel Integration', () => {
           setTimeout(r, 200)
         })
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -808,7 +838,7 @@ describe('Traforo Tunnel Integration', () => {
           ws.close()
         }
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -855,7 +885,7 @@ describe('Traforo Tunnel Integration', () => {
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -903,7 +933,7 @@ describe('Traforo Tunnel Integration', () => {
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -935,7 +965,10 @@ describe('Traforo Tunnel Integration', () => {
         const responses: string[] = []
 
         ws.on('message', (data: WebSocket.RawData) => {
-          const parsed = JSON.parse(data.toString()) as { type: string; message: string }
+          const parsed = JSON.parse(data.toString()) as {
+            type: string
+            message: string
+          }
           if (parsed.type === 'echo') {
             responses.push(parsed.message)
           }
@@ -953,12 +986,15 @@ describe('Traforo Tunnel Integration', () => {
         expect(responses.length).toBe(messageCount)
         // Messages should arrive (order may vary due to async nature)
         const sortedResponses = responses.sort()
-        const expected = Array.from({ length: messageCount }, (_, i) => `rapid-${i}`).sort()
+        const expected = Array.from(
+          { length: messageCount },
+          (_, i) => `rapid-${i}`,
+        ).sort()
         expect(sortedResponses).toEqual(expected)
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
   })
 })
@@ -977,7 +1013,7 @@ describe('Tunnel Status and Offline Behavior', () => {
       expect(data.online).toBe(false)
       expect(data.tunnelId).toBe(offlineTunnelId)
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -992,7 +1028,7 @@ describe('Tunnel Status and Offline Behavior', () => {
       const body = await res.text()
       expect(body.toLowerCase()).toContain('offline')
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -1002,25 +1038,27 @@ describe('Tunnel Status and Offline Behavior', () => {
       const wsUrl = `wss://${offlineTunnelId}-tunnel-preview.traforo.dev/ws`
       const ws = new WebSocket(wsUrl)
 
-      const closeEvent = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('WebSocket close timeout'))
-        }, 10_000)
+      const closeEvent = await new Promise<{ code: number; reason: string }>(
+        (resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('WebSocket close timeout'))
+          }, 10_000)
 
-        ws.on('close', (code: number, reason: Buffer) => {
-          clearTimeout(timeout)
-          resolve({ code, reason: reason.toString() })
-        })
+          ws.on('close', (code: number, reason: Buffer) => {
+            clearTimeout(timeout)
+            resolve({ code, reason: reason.toString() })
+          })
 
-        ws.on('error', () => {
-          // Error is expected, wait for close
-        })
-      })
+          ws.on('error', () => {
+            // Error is expected, wait for close
+          })
+        },
+      )
 
       // Should close with code 4008 (Tunnel offline)
       expect(closeEvent.code).toBe(4008)
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 })
 
@@ -1081,7 +1119,7 @@ describe('Tunnel Reconnection', () => {
       client2.close()
       await testServer.close()
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 })
 
@@ -1160,7 +1198,7 @@ describe('Vite HMR through tunnel', () => {
       expect(body).toContain('<div id="app">')
       expect(body).toContain('counter.ts')
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -1173,7 +1211,7 @@ describe('Vite HMR through tunnel', () => {
       const body = await res.text()
       expect(body).toContain('count is 0')
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -1250,7 +1288,7 @@ describe('Vite HMR through tunnel', () => {
       const original = fs.readFileSync(counterFile, 'utf-8')
       fs.writeFileSync(
         counterFile,
-        original.replace('count is 0', 'count is 1')
+        original.replace('count is 0', 'count is 1'),
       )
 
       // Wait for HMR message through the tunnel
@@ -1264,7 +1302,7 @@ describe('Vite HMR through tunnel', () => {
 
       ws.close()
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -1277,6 +1315,6 @@ describe('Vite HMR through tunnel', () => {
       const body = await res.text()
       expect(body).toContain('count is 1')
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 })

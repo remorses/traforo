@@ -21,7 +21,7 @@ export type RunTunnelOptions = {
 async function waitForPort(
   port: number,
   host = 'localhost',
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
 ): Promise<void> {
   const start = Date.now()
   const checkInterval = 500
@@ -151,7 +151,10 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   try {
     await client.connect()
   } catch (err) {
-    console.error('Failed to connect:', err instanceof Error ? err.message : String(err))
+    console.error(
+      'Failed to connect:',
+      err instanceof Error ? err.message : String(err),
+    )
     if (child) {
       child.kill()
     }

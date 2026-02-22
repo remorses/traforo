@@ -273,7 +273,9 @@ export class TunnelClient {
       ? subprotocol.split(',').map((p) => p.trim())
       : undefined
 
-    console.log(`WS OPEN ${msg.path} (${msg.connId})${protocols ? ` protocols=${protocols}` : ''}`)
+    console.log(
+      `WS OPEN ${msg.path} (${msg.connId})${protocols ? ` protocols=${protocols}` : ''}`,
+    )
 
     try {
       const localWs = new WebSocket(url, protocols)

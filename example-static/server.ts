@@ -66,8 +66,8 @@ Bun.serve({
               }),
               {
                 headers: { 'Content-Type': 'application/json' },
-              }
-            )
+              },
+            ),
           )
         }, 5000)
       })
@@ -83,7 +83,7 @@ Bun.serve({
         }),
         {
           headers: { 'Content-Type': 'application/json' },
-        }
+        },
       )
     }
 
@@ -285,7 +285,12 @@ function closeWS() {
     open(ws) {
       wsConnections.add(ws)
       console.log(`WebSocket connected (total: ${wsConnections.size})`)
-      ws.send(JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() }))
+      ws.send(
+        JSON.stringify({
+          type: 'connected',
+          timestamp: new Date().toISOString(),
+        }),
+      )
     },
     message(ws, message) {
       console.log(`WebSocket message: ${message}`)
@@ -295,7 +300,7 @@ function closeWS() {
           type: 'echo',
           message: message.toString(),
           timestamp: new Date().toISOString(),
-        })
+        }),
       )
     },
     close(ws) {

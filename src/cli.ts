@@ -11,7 +11,7 @@ cli
   .option('-p, --port <port>', 'Local port to expose (required)')
   .option(
     '-t, --tunnel-id [id]',
-    'Custom tunnel ID (only for services safe to expose publicly; prefer random default)'
+    'Custom tunnel ID (only for services safe to expose publicly; prefer random default)',
   )
   .option('-h, --host [host]', 'Local host (default: localhost)')
   .option('-s, --server [url]', 'Tunnel server URL')
@@ -45,7 +45,7 @@ cli
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
       })
-    }
+    },
   )
 
 cli.help()

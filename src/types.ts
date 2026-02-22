@@ -148,7 +148,7 @@ export type DownstreamEvent = UpstreamConnectedEvent | UpstreamDisconnectedEvent
 
 // Helper to create type-safe messages
 export function createMessage<T extends UpstreamMessage | DownstreamMessage>(
-  msg: T
+  msg: T,
 ): string {
   return JSON.stringify(msg)
 }
