@@ -1238,38 +1238,57 @@ describe('Vite HMR through tunnel', () => {
       })
 
       // Wait for Vite's "connected" message
-      const connectedMsg = await new Promise<string>((resolve, reject) => {
+      const connectedMsg = await new Promise<{
+        payload: string
+        isBinary: boolean
+      }>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('Vite connected message timeout'))
         }, 10_000)
 
-        ws.on('message', function onMsg(data: WebSocket.RawData) {
+        ws.on('message', function onMsg(
+          data: WebSocket.RawData,
+          isBinary: boolean,
+        ) {
           const msg = JSON.parse(data.toString())
           if (msg.type === 'connected') {
             ws.removeListener('message', onMsg)
             clearTimeout(timeout)
-            resolve(data.toString())
+            resolve({
+              payload: data.toString(),
+              isBinary,
+            })
           }
         })
       })
 
-      const parsed = JSON.parse(connectedMsg) as { type: string }
+      const parsed = JSON.parse(connectedMsg.payload) as { type: string }
       expect(parsed.type).toBe('connected')
+      expect(connectedMsg.isBinary).toBe(false)
 
       // Set up listener for HMR message before modifying file.
       // Vite sends "update" for modules with import.meta.hot.accept(),
       // or "full-reload" for modules without it. Both prove the tunnel works.
-      const hmrPromise = new Promise<string>((resolve, reject) => {
+      const hmrPromise = new Promise<{
+        payload: string
+        isBinary: boolean
+      }>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('HMR message timeout'))
         }, 15_000)
 
-        ws.on('message', function onHmr(data: WebSocket.RawData) {
+        ws.on('message', function onHmr(
+          data: WebSocket.RawData,
+          isBinary: boolean,
+        ) {
           const msg = JSON.parse(data.toString())
           if (msg.type === 'update' || msg.type === 'full-reload') {
             ws.removeListener('message', onHmr)
             clearTimeout(timeout)
-            resolve(data.toString())
+            resolve({
+              payload: data.toString(),
+              isBinary,
+            })
           }
         })
       })
@@ -1293,12 +1312,13 @@ describe('Vite HMR through tunnel', () => {
 
       // Wait for HMR message through the tunnel
       const hmrMsg = await hmrPromise
-      const hmrParsed = JSON.parse(hmrMsg) as {
+      const hmrParsed = JSON.parse(hmrMsg.payload) as {
         type: string
         path?: string
         updates?: Array<{ path: string }>
       }
       expect(['update', 'full-reload']).toContain(hmrParsed.type)
+      expect(hmrMsg.isBinary).toBe(false)
 
       ws.close()
     },

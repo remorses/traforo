@@ -319,23 +319,16 @@ export class TunnelClient {
       })
 
       localWs.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
-        let frameData: string
-        let binary = false
-
-        if (isBinary || data instanceof Buffer) {
-          frameData = Buffer.isBuffer(data)
-            ? data.toString('base64')
-            : Buffer.from(data as ArrayBuffer).toString('base64')
-          binary = true
-        } else {
-          frameData = data.toString()
-        }
+        const dataBuffer = rawDataToBuffer(data)
+        const frameData = isBinary
+          ? dataBuffer.toString('base64')
+          : dataBuffer.toString('utf8')
 
         const frame: WsFrameResponseMessage = {
           type: 'ws_frame',
           connId: msg.connId,
           data: frameData,
-          binary,
+          binary: isBinary,
         }
         this.send(frame)
       })
@@ -393,4 +386,16 @@ export class TunnelClient {
 
     this.ws.send(JSON.stringify(msg))
   }
+}
+
+function rawDataToBuffer(data: WebSocket.RawData): Buffer {
+  if (Buffer.isBuffer(data)) {
+    return data
+  }
+
+  if (Array.isArray(data)) {
+    return Buffer.concat(data.map((chunk) => rawDataToBuffer(chunk)))
+  }
+
+  return Buffer.from(data)
 }
