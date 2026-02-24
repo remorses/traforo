@@ -39,6 +39,8 @@ type TunnelClientOptions = {
   autoReconnect?: boolean
   /** Reconnect delay in ms */
   reconnectDelay?: number
+  /** Enable edge caching with this partition key */
+  cacheKey?: string
 }
 
 export class TunnelClient {
@@ -56,8 +58,9 @@ export class TunnelClient {
       localHttps: false,
       autoReconnect: true,
       reconnectDelay: 3000,
+      cacheKey: undefined,
       ...options,
-    }
+    } as Required<TunnelClientOptions>
   }
 
   get url(): string {
@@ -69,7 +72,10 @@ export class TunnelClient {
       throw new Error('Client is closed')
     }
 
-    const wsUrl = `${this.options.serverUrl}/traforo-upstream?_tunnelId=${this.options.tunnelId}`
+    let wsUrl = `${this.options.serverUrl}/traforo-upstream?_tunnelId=${this.options.tunnelId}`
+    if (this.options.cacheKey) {
+      wsUrl += `&_cacheKey=${encodeURIComponent(this.options.cacheKey)}`
+    }
     // console.log(`Connecting to ${wsUrl}...`)
 
     return new Promise((resolve, reject) => {

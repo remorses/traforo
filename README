@@ -31,10 +31,41 @@ The tunnel URL will be:
 
     -p, --port <port>       Local port to expose (required)
     -t, --tunnel-id [id]    Custom tunnel ID (prefer random default)
+    -c, --cache [key]       Enable edge caching (optional partition key)
     -h, --host [host]       Local host (default: localhost)
     -s, --server [url]      Custom tunnel server URL
     --help                  Show help
     --version               Show version
+
+## EDGE CACHING
+
+Cache responses at Cloudflare's edge so repeat requests never hit your
+local machine:
+
+    traforo -p 3000 --cache
+
+What gets cached:
+
+- GET requests where the origin sends cacheable Cache-Control headers
+  (public, max-age, s-maxage)
+- Static assets (.js, .css, .png, .jpg, .svg, .woff2, .wasm, etc.)
+  get a default 24h edge TTL even without Cache-Control headers
+
+What never gets cached:
+
+- Non-GET requests
+- Responses with Set-Cookie, Cache-Control: no-store or private
+- Streaming responses (SSE, ndjson)
+- WebSocket connections
+
+Cache partitioning lets you bust all cached content by changing the key:
+
+    traforo -p 3000 --cache v1     # first deployment
+    traforo -p 3000 --cache v2     # new deploy, fresh cache
+
+Each key creates a separate cache namespace. Old entries expire via TTL.
+
+The X-Traforo-Cache response header shows HIT or MISS for debugging.
 
 ## HOW IT WORKS
 
@@ -58,6 +89,7 @@ The tunnel URL will be:
     const client = new TunnelClient({
       localPort: 3000,
       tunnelId: 'my-app',
+      cacheKey: 'v1',  // optional: enable edge caching
     })
 
     await client.connect()

@@ -12,6 +12,8 @@ export type RunTunnelOptions = {
   baseDomain?: string
   serverUrl?: string
   command?: string[]
+  /** Enable edge caching with optional partition key */
+  cacheKey?: string
 }
 
 /**
@@ -133,7 +135,14 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     localHost,
     ...(options.baseDomain && { baseDomain: options.baseDomain }),
     ...(options.serverUrl && { serverUrl: options.serverUrl }),
+    ...(options.cacheKey && { cacheKey: options.cacheKey }),
   })
+
+  if (options.cacheKey) {
+    console.log(
+      `Edge caching enabled (key: ${options.cacheKey})`,
+    )
+  }
 
   // Handle shutdown
   const cleanup = () => {

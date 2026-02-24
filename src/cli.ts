@@ -15,16 +15,23 @@ cli
   )
   .option('-h, --host [host]', 'Local host (default: localhost)')
   .option('-s, --server [url]', 'Tunnel server URL')
+  .option(
+    '-c, --cache [key]',
+    'Enable edge caching for static assets (optional key for cache partitioning, default: "default")',
+  )
   .example(`${CLI_NAME} -p 3000`)
   .example(`${CLI_NAME} -p 3000 -- next start`)
   .example(`${CLI_NAME} -p 3000 -- pnpm dev`)
   .example(`${CLI_NAME} -p 5173 -t my-app -- vite`)
+  .example(`${CLI_NAME} -p 3000 --cache`)
+  .example(`${CLI_NAME} -p 3000 --cache v2`)
   .action(
     async (options: {
       port?: string
       tunnelId?: string
       host?: string
       server?: string
+      cache?: string | boolean
     }) => {
       if (!options.port) {
         console.error('Error: --port is required')
@@ -38,12 +45,20 @@ cli
         process.exit(1)
       }
 
+      // --cache with no value comes as boolean true, --cache v2 comes as string "v2"
+      const cacheKey = options.cache
+        ? typeof options.cache === 'string'
+          ? options.cache
+          : 'default'
+        : undefined
+
       await runTunnel({
         port,
         tunnelId: options.tunnelId,
         localHost: options.host,
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
+        cacheKey,
       })
     },
   )
