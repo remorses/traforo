@@ -34,6 +34,15 @@ function createTestServer(port: number): Promise<{
 }> {
   return new Promise((resolve) => {
     const wsConnections = new Set<WebSocket>()
+    const cacheCounters = {
+      staticAsset: 0,
+      pragmaNoCache: 0,
+      varyStar: 0,
+      explicit: 0,
+      private: 0,
+      noCache: 0,
+      setCookie: 0,
+    }
 
     const server = http.createServer((req, res) => {
       const url = new URL(req.url || '/', `http://localhost:${port}`)
@@ -80,6 +89,69 @@ function createTestServer(port: number): Promise<{
       if (path === '/json') {
         res.setHeader('Content-Type', 'application/json')
         res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }))
+        return
+      }
+
+      // Static asset-like endpoint without Cache-Control
+      if (path === '/asset.js') {
+        cacheCounters.staticAsset += 1
+        res.setHeader('Content-Type', 'application/javascript')
+        res.end(`window.__assetCounter=${cacheCounters.staticAsset};`)
+        return
+      }
+
+      // Static asset-like endpoint with Pragma no-cache
+      if (path === '/pragma.js') {
+        cacheCounters.pragmaNoCache += 1
+        res.setHeader('Content-Type', 'application/javascript')
+        res.setHeader('Pragma', 'no-cache')
+        res.end(`window.__pragmaCounter=${cacheCounters.pragmaNoCache};`)
+        return
+      }
+
+      // Static asset-like endpoint with Vary: * (must never be cached)
+      if (path === '/vary-star.js') {
+        cacheCounters.varyStar += 1
+        res.setHeader('Content-Type', 'application/javascript')
+        res.setHeader('Vary', '*')
+        res.end(`window.__varyCounter=${cacheCounters.varyStar};`)
+        return
+      }
+
+      // Explicitly cacheable endpoint
+      if (path === '/cache-explicit') {
+        cacheCounters.explicit += 1
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'public, max-age=120')
+        res.end(JSON.stringify({ counter: cacheCounters.explicit }))
+        return
+      }
+
+      // Explicitly non-cacheable endpoint (private)
+      if (path === '/cache-private') {
+        cacheCounters.private += 1
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'private, max-age=120')
+        res.end(JSON.stringify({ counter: cacheCounters.private }))
+        return
+      }
+
+      // Explicitly non-cacheable endpoint (no-cache)
+      if (path === '/cache-no-cache') {
+        cacheCounters.noCache += 1
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'no-cache')
+        res.end(JSON.stringify({ counter: cacheCounters.noCache }))
+        return
+      }
+
+      // Should bypass due to Set-Cookie even if cache headers are cacheable
+      if (path === '/cache-set-cookie') {
+        cacheCounters.setCookie += 1
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'public, max-age=120')
+        res.setHeader('Set-Cookie', `sid=${cacheCounters.setCookie}; Path=/; HttpOnly`)
+        res.end(JSON.stringify({ counter: cacheCounters.setCookie }))
         return
       }
 
@@ -293,6 +365,7 @@ describe('Traforo Tunnel Integration', () => {
       localPort,
       tunnelId,
       serverUrl,
+      cacheKey: `it-${Date.now()}`,
       autoReconnect: false,
     })
 
@@ -535,6 +608,201 @@ describe('Traforo Tunnel Integration', () => {
         }>
         const requestIds = results.map((r) => r.query.request).sort()
         expect(requestIds).toEqual(['0', '1', '2', '3', '4'])
+      },
+      TEST_TIMEOUT,
+    )
+  })
+
+  describe('Edge Caching', () => {
+    test(
+      'caches static asset paths with Cloudflare-like defaults',
+      async () => {
+        const key = `${Date.now()}-asset`
+        const url = `${tunnelUrl}/asset.js?key=${key}`
+
+        const first = await fetch(url)
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('MISS')
+        const firstBody = await first.text()
+
+        const second = await fetch(url)
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('HIT')
+        const secondBody = await second.text()
+
+        expect(secondBody).toBe(firstBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'caches explicit Cache-Control responses on non-static paths',
+      async () => {
+        const key = `${Date.now()}-explicit`
+        const url = `${tunnelUrl}/cache-explicit?key=${key}`
+
+        const first = await fetch(url)
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('MISS')
+        const firstData = (await first.json()) as { counter: number }
+
+        const second = await fetch(url)
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('HIT')
+        const secondData = (await second.json()) as { counter: number }
+
+        expect(secondData.counter).toBe(firstData.counter)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'Authorization requests bypass lookup even when anonymous cache exists',
+      async () => {
+        const key = `${Date.now()}-auth`
+        const url = `${tunnelUrl}/asset.js?key=${key}`
+        const authHeaders = { Authorization: 'Bearer test-token' }
+
+        const warmAnonymous = await fetch(url)
+        expect(warmAnonymous.status).toBe(200)
+        expect(warmAnonymous.headers.get('x-traforo-cache')).toBe('MISS')
+        const warmBody = await warmAnonymous.text()
+
+        const first = await fetch(url, { headers: authHeaders })
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(first.headers.get('x-traforo-cache-reason')).toBe(
+          'request-has-authorization',
+        )
+        const firstBody = await first.text()
+
+        const second = await fetch(url, { headers: authHeaders })
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(second.headers.get('x-traforo-cache-reason')).toBe(
+          'request-has-authorization',
+        )
+        const secondBody = await second.text()
+
+        const finalAnonymous = await fetch(url)
+        expect(finalAnonymous.status).toBe(200)
+        expect(finalAnonymous.headers.get('x-traforo-cache')).toBe('HIT')
+        const finalBody = await finalAnonymous.text()
+
+        expect(firstBody).not.toBe(warmBody)
+        expect(secondBody).not.toBe(firstBody)
+        expect(finalBody).toBe(warmBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'request Cache-Control no-cache bypasses lookup and keeps cached copy intact',
+      async () => {
+        const key = `${Date.now()}-req-no-cache`
+        const url = `${tunnelUrl}/asset.js?key=${key}`
+
+        const warm = await fetch(url)
+        expect(warm.status).toBe(200)
+        expect(warm.headers.get('x-traforo-cache')).toBe('MISS')
+        const warmBody = await warm.text()
+
+        const bypass = await fetch(url, {
+          headers: { 'Cache-Control': 'no-cache' },
+        })
+        expect(bypass.status).toBe(200)
+        expect(bypass.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(bypass.headers.get('x-traforo-cache-reason')).toBe(
+          'request-cache-control-no-cache',
+        )
+        const bypassBody = await bypass.text()
+
+        const cached = await fetch(url)
+        expect(cached.status).toBe(200)
+        expect(cached.headers.get('x-traforo-cache')).toBe('HIT')
+        const cachedBody = await cached.text()
+
+        expect(bypassBody).not.toBe(warmBody)
+        expect(cachedBody).toBe(warmBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'does not cache static assets with Pragma no-cache',
+      async () => {
+        const key = `${Date.now()}-pragma`
+        const url = `${tunnelUrl}/pragma.js?key=${key}`
+
+        const first = await fetch(url)
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(first.headers.get('x-traforo-cache-reason')).toBe(
+          'response-pragma-no-cache',
+        )
+        const firstBody = await first.text()
+
+        const second = await fetch(url)
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(second.headers.get('x-traforo-cache-reason')).toBe(
+          'response-pragma-no-cache',
+        )
+        const secondBody = await second.text()
+
+        expect(secondBody).not.toBe(firstBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'does not cache static assets with Vary star',
+      async () => {
+        const key = `${Date.now()}-vary`
+        const url = `${tunnelUrl}/vary-star.js?key=${key}`
+
+        const first = await fetch(url)
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(first.headers.get('x-traforo-cache-reason')).toBe(
+          'response-vary-star-not-cacheable',
+        )
+        const firstBody = await first.text()
+
+        const second = await fetch(url)
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(second.headers.get('x-traforo-cache-reason')).toBe(
+          'response-vary-star-not-cacheable',
+        )
+        const secondBody = await second.text()
+
+        expect(secondBody).not.toBe(firstBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'bypasses private/no-cache/set-cookie responses',
+      async () => {
+        const cases = ['/cache-private', '/cache-no-cache', '/cache-set-cookie']
+
+        for (const path of cases) {
+          const key = `${Date.now()}-${path}`
+          const url = `${tunnelUrl}${path}?key=${key}`
+
+          const first = await fetch(url)
+          expect(first.status).toBe(200)
+          expect(first.headers.get('x-traforo-cache')).toBe('BYPASS')
+          const firstData = (await first.json()) as { counter: number }
+
+          const second = await fetch(url)
+          expect(second.status).toBe(200)
+          expect(second.headers.get('x-traforo-cache')).toBe('BYPASS')
+          const secondData = (await second.json()) as { counter: number }
+
+          expect(secondData.counter).toBeGreaterThan(firstData.counter)
+        }
       },
       TEST_TIMEOUT,
     )

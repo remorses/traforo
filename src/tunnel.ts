@@ -1,4 +1,8 @@
 import dedent from 'string-dedent'
+import {
+  evaluateCloudflareCacheability,
+  getRequestCacheBypassReason,
+} from './cache-policy.js'
 import type {
   UpstreamMessage,
   DownstreamMessage,
@@ -41,6 +45,8 @@ type PendingHttpRequest = {
   cacheRequest?: Request
   /** Immutable cache context captured at request time (avoids race if key changes mid-flight) */
   cacheContext?: CacheContext
+  /** Request-side directive that forced cache lookup bypass */
+  cacheLookupBypassReason?: string
 }
 
 type StreamingHttpRequest = {
@@ -58,10 +64,6 @@ type PendingWsConnection = {
 const HTTP_TIMEOUT_MS = 30_000
 const WS_OPEN_TIMEOUT_MS = 10_000
 const RATE_LIMIT_PERIOD_SECONDS = 60
-
-/** Static asset extensions that get default caching when --cache is enabled */
-const STATIC_ASSET_EXTENSIONS =
-  /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|otf|wasm|map|webp|avif|mp4|webm|ogg|mp3|wav|pdf)$/i
 
 // Worker entrypoint
 export default {
@@ -128,7 +130,6 @@ export class Tunnel {
   private pendingWsConnections: Map<string, PendingWsConnection> = new Map()
   /** Cache key for edge caching, null when caching is disabled */
   private cacheKey: string | null = null
-  private tunnelId: string = 'default'
 
   constructor(state: DurableObjectState, env: Env) {
     this.ctx = state
@@ -146,7 +147,6 @@ export class Tunnel {
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url)
     const tunnelId = url.searchParams.get('_tunnelId') || 'default'
-    this.tunnelId = tunnelId
     const isUpgrade = req.headers.get('Upgrade') === 'websocket'
 
     console.log(
@@ -251,11 +251,18 @@ export class Tunnel {
     // Build a clean cache request (without internal params)
     const cacheRequest =
       cacheContext && req.method === 'GET'
-        ? new Request(url.toString(), { method: 'GET' })
+        ? new Request(url.toString(), {
+            method: 'GET',
+            headers: req.headers,
+          })
         : undefined
 
+    const cacheLookupBypassReason = cacheRequest
+      ? getRequestCacheBypassReason(cacheRequest)
+      : null
+
     // Check edge cache before proxying
-    if (cacheRequest && cacheContext) {
+    if (cacheRequest && cacheContext && !cacheLookupBypassReason) {
       try {
         const cache = await caches.open(
           `traforo:${cacheContext.tunnelId}:${cacheContext.cacheKey}`,
@@ -270,6 +277,8 @@ export class Tunnel {
       } catch (err) {
         console.error(`[DO] Cache check error:`, err)
       }
+    } else if (cacheLookupBypassReason) {
+      console.log(`[DO] Cache LOOKUP BYPASS reason=${cacheLookupBypassReason}`)
     }
 
     const upstream = this.getUpstream(tunnelId)
@@ -330,6 +339,7 @@ export class Tunnel {
         timeout,
         cacheRequest,
         cacheContext,
+        cacheLookupBypassReason: cacheLookupBypassReason || undefined,
       })
     })
   }
@@ -596,15 +606,26 @@ export class Tunnel {
     const headers = buildHeaders(msg.headers)
     const response = new Response(body, { status: msg.status, headers })
 
+    if (pending.cacheLookupBypassReason) {
+      response.headers.set('X-Traforo-Cache', 'BYPASS')
+      response.headers.set(
+        'X-Traforo-Cache-Reason',
+        pending.cacheLookupBypassReason,
+      )
+      pending.resolve(response)
+      return
+    }
+
     // Store in edge cache if cacheable (use immutable context from request time)
     if (pending.cacheRequest && pending.cacheContext) {
-      const stored = this.cacheStore(
+      const cacheResult = this.cacheStore(
         pending.cacheRequest,
         response,
         msg.headers,
         pending.cacheContext,
       )
-      response.headers.set('X-Traforo-Cache', stored ? 'MISS' : 'BYPASS')
+      response.headers.set('X-Traforo-Cache', cacheResult.stored ? 'MISS' : 'BYPASS')
+      response.headers.set('X-Traforo-Cache-Reason', cacheResult.reason)
     }
 
     pending.resolve(response)
@@ -620,6 +641,10 @@ export class Tunnel {
     this.pendingHttpRequests.delete(msg.id)
 
     const headers = buildHeaders(msg.headers)
+
+    if (pending.cacheContext) {
+      headers.set('X-Traforo-Cache', 'BYPASS')
+    }
 
     // Create TransformStream for streaming response
     const { readable, writable } = new TransformStream<Uint8Array>()
@@ -733,52 +758,19 @@ export class Tunnel {
     response: Response,
     rawHeaders: Record<string, string | string[]>,
     ctx: CacheContext,
-  ): boolean {
-    // Only cache successful responses (200, 301, 302)
-    // Exclude 304 to avoid poisoning cache with conditional responses
-    if (
-      response.status !== 200 &&
-      response.status !== 301 &&
-      response.status !== 302
-    ) {
-      return false
+  ): { stored: boolean; reason: string } {
+    const decision = evaluateCloudflareCacheability({
+      request: cacheRequest,
+      responseStatus: response.status,
+      responseHeaders: response.headers,
+    })
+
+    if (!decision.cacheable) {
+      console.log(`[DO] Cache BYPASS reason=${decision.reason}`)
+      return { stored: false, reason: decision.reason }
     }
-
-    // Never cache responses with Set-Cookie
-    if (response.headers.has('set-cookie')) return false
-
-    const cacheControl = response.headers.get('cache-control') || ''
-    const contentType = response.headers.get('content-type') || ''
-
-    // Never cache explicitly non-cacheable responses
-    if (
-      cacheControl.includes('no-store') ||
-      cacheControl.includes('no-cache') ||
-      cacheControl.includes('private')
-    ) {
-      return false
-    }
-
-    // Never cache streaming responses
-    if (
-      contentType.includes('text/event-stream') ||
-      contentType.includes('application/x-ndjson')
-    ) {
-      return false
-    }
-
-    // Determine if we should cache:
-    // 1. Origin explicitly set cacheable Cache-Control
-    // 2. Path matches static asset extensions (add default cache headers)
-    const hasExplicitCache =
-      cacheControl.includes('max-age') ||
-      cacheControl.includes('s-maxage') ||
-      cacheControl.includes('public')
 
     const pathname = new URL(cacheRequest.url).pathname
-    const isStaticAsset = STATIC_ASSET_EXTENSIONS.test(pathname)
-
-    if (!hasExplicitCache && !isStaticAsset) return false
 
     // Build response to cache
     const responseToCache = new Response(response.clone().body, {
@@ -786,12 +778,9 @@ export class Tunnel {
       headers: buildHeaders(rawHeaders),
     })
 
-    // For static assets without explicit cache headers, add a default
-    if (isStaticAsset && !hasExplicitCache) {
-      responseToCache.headers.set(
-        'Cache-Control',
-        'public, s-maxage=86400, max-age=3600',
-      )
+    // Apply deterministic default TTL fallback when policy requested it.
+    if (decision.cacheControlOverride) {
+      responseToCache.headers.set('Cache-Control', decision.cacheControlOverride)
     }
 
     responseToCache.headers.set('X-Traforo-Cache', 'STORED')
@@ -805,7 +794,7 @@ export class Tunnel {
         .catch((err) => console.error(`[DO] Cache store error:`, err)),
     )
 
-    return true
+    return { stored: true, reason: decision.reason }
   }
 
   private handleWsError(msg: WsErrorMessage) {

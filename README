@@ -48,15 +48,19 @@ What gets cached:
 
 - GET requests where the origin sends cacheable Cache-Control headers
   (public, max-age, s-maxage)
-- Static assets (.js, .css, .png, .jpg, .svg, .woff2, .wasm, etc.)
-  get a default 24h edge TTL even without Cache-Control headers
+- Static asset extensions use Cloudflare-like default fallback TTLs when
+  cache headers are missing: 200/301=120m, 302/303=20m, 404/410=3m
 
 What never gets cached:
 
 - Non-GET requests
-- Responses with Set-Cookie, Cache-Control: no-store or private
+- 206 Partial Content responses (Cache API put() limitation)
+- Responses with Set-Cookie, Cache-Control: no-store/no-cache/private
 - Streaming responses (SSE, ndjson)
 - WebSocket connections
+
+Requests with `Authorization`, `Cache-Control: no-cache/no-store/max-age=0`,
+or `Pragma: no-cache` bypass edge cache lookup.
 
 Cache partitioning lets you bust all cached content by changing the key:
 
@@ -65,7 +69,8 @@ Cache partitioning lets you bust all cached content by changing the key:
 
 Each key creates a separate cache namespace. Old entries expire via TTL.
 
-The X-Traforo-Cache response header shows HIT or MISS for debugging.
+The X-Traforo-Cache response header shows HIT, MISS, or BYPASS for debugging.
+When BYPASS/MISS comes from the local origin path, X-Traforo-Cache-Reason explains why.
 
 ## HOW IT WORKS
 
