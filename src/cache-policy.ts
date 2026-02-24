@@ -1,5 +1,11 @@
 /**
  * Cloudflare-like cache eligibility policy used by the Durable Object cache layer.
+ *
+ * Source references for Cloudflare behavior:
+ * - https://developers.cloudflare.com/cache/concepts/default-cache-behavior/
+ * - https://developers.cloudflare.com/cache/concepts/cache-control/
+ * - https://developers.cloudflare.com/cache/how-to/configure-cache-status-code/
+ * - https://developers.cloudflare.com/workers/runtime-apis/cache/
  */
 
 import CachePolicy from 'http-cache-semantics'
