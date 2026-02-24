@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.0.9
+
+### Highlights
+
+- **Fix Vite HMR WebSocket payload type** - Text frames are now kept as text end-to-end, so browser clients receive JSON strings instead of `Blob` payloads. This fixes runtime errors like `"[object Blob] is not valid JSON"` in Vite HMR.
+- **Harden public tunnel surface** - Tunnel ID validation and Cloudflare IP-based throttling were improved to better protect shared/public endpoints.
+- **Stabilize throttling behavior** - `Retry-After` values are now consistent for rate-limited responses.
+
+### Technical Notes
+
+```ts
+// before
+if (isBinary || data instanceof Buffer) {
+  // text frames from Node ws were misclassified as binary
+}
+
+// now
+if (isBinary) {
+  // binary => base64
+} else {
+  // text => utf8 string
+}
+```
+
+```text
+Local server WS text frame
+        |
+        v
+Traforo client keeps text semantics
+        |
+        v
+Browser receives string payload
+        |
+        v
+Vite HMR JSON.parse(data) succeeds
+```
+
+### Tests
+
+- Expanded Vite HMR coverage to assert that HMR `connected`/`update` messages are delivered as **non-binary** frames.
+
 ## 0.0.8
 
 ### Bug Fixes
