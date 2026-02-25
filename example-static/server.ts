@@ -310,7 +310,7 @@ function closeWS() {
   },
 })
 
-console.log(`Server running at http://localhost:${PORT}`)
+console.log(`Server running at http://127.0.0.1:${PORT}`)
 console.log(`Endpoints:`)
 console.log(`  GET  /        - Static HTML page`)
 console.log(`  GET  /echo    - Echo request info`)

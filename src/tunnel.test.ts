@@ -45,7 +45,7 @@ function createTestServer(port: number): Promise<{
     }
 
     const server = http.createServer((req, res) => {
-      const url = new URL(req.url || '/', `http://localhost:${port}`)
+      const url = new URL(req.url || '/', `http://127.0.0.1:${port}`)
       const path = url.pathname
 
       // Echo endpoint - returns request info
@@ -252,7 +252,7 @@ function createTestServer(port: number): Promise<{
     const wss = new WebSocketServer({ server })
 
     wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
-      const url = new URL(req.url || '/', `http://localhost:${port}`)
+      const url = new URL(req.url || '/', `http://127.0.0.1:${port}`)
       wsConnections.add(ws)
 
       // Send welcome with connection count
