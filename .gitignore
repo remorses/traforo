@@ -3,6 +3,7 @@ node_modules/
 .wrangler/
 tmp/
 opensrc/
+app.log
 
 # E2e framework fixture build artifacts (generated on first dev server run)
 e2e/fixtures/**/.next/
