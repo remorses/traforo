@@ -52,7 +52,7 @@
     "wrangler": "^4.24.3"
   },
   "dependencies": {
-    "goke": "^6.1.2",
+    "goke": "^6.2.0",
     "http-cache-semantics": "^4.2.0",
     "string-dedent": "^3.0.2",
     "ws": "^8.19.0"
