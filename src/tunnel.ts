@@ -30,6 +30,8 @@ export type Env = {
 type Attachment = {
   role: 'upstream' | 'downstream'
   tunnelId: string
+  /** Password stored on upstream attachment, survives DO hibernation */
+  password?: string
 }
 
 type CacheContext = {
@@ -179,9 +181,10 @@ export class Tunnel {
       }
       // User WebSocket connection to be proxied
       // Password check for WebSocket upgrades
-      if (this.password) {
+      const wsPassword = this.getPassword(tunnelId)
+      if (wsPassword) {
         const cookie = parseCookie(req.headers.get('cookie') || '')
-        if (cookie['traforo-password'] !== this.password) {
+        if (cookie['traforo-password'] !== wsPassword) {
           // Can't show HTML for WS upgrades, reject with close code
           const pair = new WebSocketPair()
           const [client, server] = Object.values(pair)
@@ -211,11 +214,11 @@ export class Tunnel {
 
     // Password login endpoint
     if (url.pathname === '/traforo-login' && req.method === 'POST') {
-      return this.handleLogin(req)
+      return this.handleLogin(tunnelId, req)
     }
 
     // Password protection check for HTTP requests
-    const passwordResponse = this.checkPassword(req)
+    const passwordResponse = this.checkPassword(tunnelId, req)
     if (passwordResponse) {
       return passwordResponse
     }
@@ -234,13 +237,14 @@ export class Tunnel {
    * Returns null if no password is set or cookie is valid.
    * Returns a 401 Response if unauthorized.
    */
-  private checkPassword(req: Request): Response | null {
-    if (!this.password) {
+  private checkPassword(tunnelId: string, req: Request): Response | null {
+    const password = this.getPassword(tunnelId)
+    if (!password) {
       return null
     }
 
     const cookie = parseCookie(req.headers.get('cookie') || '')
-    if (cookie['traforo-password'] === this.password) {
+    if (cookie['traforo-password'] === password) {
       return null
     }
 
@@ -269,15 +273,16 @@ export class Tunnel {
   /**
    * Handle POST /traforo-login — validate password and set cookie.
    */
-  private async handleLogin(req: Request): Promise<Response> {
-    if (!this.password) {
+  private async handleLogin(tunnelId: string, req: Request): Promise<Response> {
+    const password = this.getPassword(tunnelId)
+    if (!password) {
       return new Response('No password configured', { status: 400 })
     }
 
     const formData = await req.formData()
     const submitted = formData.get('password')
 
-    if (typeof submitted !== 'string' || submitted !== this.password) {
+    if (typeof submitted !== 'string' || submitted !== password) {
       return new Response(passwordHtml('Incorrect password'), {
         status: 401,
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -289,7 +294,7 @@ export class Tunnel {
       status: 303,
       headers: {
         Location: '/',
-        'Set-Cookie': `traforo-password=${encodeURIComponent(this.password)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`,
+        'Set-Cookie': `traforo-password=${encodeURIComponent(password)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`,
       },
     })
   }
@@ -314,6 +319,7 @@ export class Tunnel {
     server.serializeAttachment({
       role: 'upstream',
       tunnelId,
+      ...(this.password && { password: this.password }),
     } satisfies Attachment)
 
     // Notify any waiting downstream connections
@@ -330,6 +336,26 @@ export class Tunnel {
   private getUpstream(tunnelId: string): WebSocket | null {
     const sockets = this.ctx.getWebSockets(`upstream:${tunnelId}`)
     return sockets[0] || null
+  }
+
+  /**
+   * Get the password, recovering from the upstream WS attachment if the DO
+   * was hibernated and this.password was lost from memory.
+   */
+  private getPassword(tunnelId: string): string | null {
+    if (this.password) {
+      return this.password
+    }
+    // Recover from upstream WebSocket attachment (survives hibernation)
+    const upstream = this.getUpstream(tunnelId)
+    if (upstream) {
+      const attachment = upstream.deserializeAttachment() as Attachment | undefined
+      if (attachment?.password) {
+        this.password = attachment.password
+        return this.password
+      }
+    }
+    return null
   }
 
   // ============================================
