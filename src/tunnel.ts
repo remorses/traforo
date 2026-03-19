@@ -255,7 +255,10 @@ export class Tunnel {
     if (isBrowser) {
       return new Response(passwordHtml(), {
         status: 401,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
       })
     }
 
@@ -265,7 +268,10 @@ export class Tunnel {
         "  curl -b 'traforo-password=YOUR_PASSWORD' URL\n",
       {
         status: 401,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
       },
     )
   }
@@ -279,13 +285,27 @@ export class Tunnel {
       return new Response('No password configured', { status: 400 })
     }
 
-    const formData = await req.formData()
-    const submitted = formData.get('password')
+    let submitted: string | File | null = null
+    try {
+      const formData = await req.formData()
+      submitted = formData.get('password')
+    } catch {
+      return new Response(passwordHtml('Invalid form submission'), {
+        status: 400,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      })
+    }
 
     if (typeof submitted !== 'string' || submitted !== password) {
       return new Response(passwordHtml('Incorrect password'), {
         status: 401,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
       })
     }
 
@@ -294,7 +314,7 @@ export class Tunnel {
       status: 303,
       headers: {
         Location: '/',
-        'Set-Cookie': `traforo-password=${encodeURIComponent(password)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`,
+        'Set-Cookie': `traforo-password=${encodeURIComponent(password)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`,
       },
     })
   }
@@ -1011,12 +1031,14 @@ function parseCookie(cookieHeader: string): Record<string, string> {
   const cookies: Record<string, string> = {}
   for (const pair of cookieHeader.split(';')) {
     const [name, ...rest] = pair.split('=')
-    if (name) {
-      const key = name.trim()
-      const value = decodeURIComponent(rest.join('=').trim())
-      if (key) {
-        cookies[key] = value
-      }
+    const key = name?.trim()
+    if (!key) continue
+    const raw = rest.join('=').trim()
+    try {
+      cookies[key] = decodeURIComponent(raw)
+    } catch {
+      // Malformed cookie value — use raw string instead of throwing
+      cookies[key] = raw
     }
   }
   return cookies
