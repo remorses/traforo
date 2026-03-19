@@ -19,6 +19,10 @@ cli
     '-c, --cache [key]',
     'Enable edge caching for static assets (optional key for cache partitioning, default: "default")',
   )
+  .option(
+    '--password <password>',
+    'Protect the tunnel with a password (visitors must enter it to access)',
+  )
   .example(`${CLI_NAME} -p 3000`)
   .example(`${CLI_NAME} -p 3000 -- next start`)
   .example(`${CLI_NAME} -p 3000 -- pnpm dev`)
@@ -32,6 +36,7 @@ cli
       host?: string
       server?: string
       cache?: string | boolean
+      password?: string
     }) => {
       if (!options.port) {
         console.error('Error: --port is required')
@@ -59,6 +64,7 @@ cli
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
         cacheKey,
+        password: options.password,
       })
     },
   )

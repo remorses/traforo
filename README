@@ -2,7 +2,7 @@
 
 HTTP tunnel via Cloudflare Durable Objects and WebSockets.
 Expose local servers to the internet with a simple CLI.
-Infinitely scalable with support for Cloudflare CDN caching.
+Infinitely scalable with support for Cloudflare CDN caching and password protection.
 
 ## INSTALLATION
 
@@ -30,13 +30,14 @@ The tunnel URL will be:
 
 ## OPTIONS
 
-    -p, --port <port>       Local port to expose (required)
-    -t, --tunnel-id [id]    Custom tunnel ID (prefer random default)
-    -c, --cache [key]       Enable edge caching (optional partition key)
-    -h, --host [host]       Local host (default: localhost)
-    -s, --server [url]      Custom tunnel server URL
-    --help                  Show help
-    --version               Show version
+    -p, --port <port>          Local port to expose (required)
+    -t, --tunnel-id [id]       Custom tunnel ID (prefer random default)
+    -c, --cache [key]          Enable edge caching (optional partition key)
+    --password <password>      Protect the tunnel with a password
+    -h, --host [host]          Local host (default: localhost)
+    -s, --server [url]         Custom tunnel server URL
+    --help                     Show help
+    --version                  Show version
 
 ## EDGE CACHING
 
@@ -73,6 +74,23 @@ Each key creates a separate cache namespace. Old entries expire via TTL.
 The X-Traforo-Cache response header shows HIT, MISS, or BYPASS for debugging.
 When BYPASS/MISS comes from the local origin path, X-Traforo-Cache-Reason explains why.
 
+## PASSWORD PROTECTION
+
+Restrict tunnel access with a password:
+
+    traforo -p 3000 --password mysecret
+
+Visitors in a browser see a login page. After entering the correct password
+a `traforo-password` cookie is set and they can browse normally.
+
+Non-browser clients (curl, APIs) get a 401 Unauthorized response with
+instructions to pass the password as a cookie:
+
+    curl -b 'traforo-password=mysecret' https://{tunnel-id}-tunnel.traforo.dev
+
+WebSocket upgrade requests without the correct cookie are rejected with
+close code 4013.
+
 ## HOW IT WORKS
 
 1. Local client connects to Cloudflare Durable Object via WebSocket
@@ -85,6 +103,7 @@ When BYPASS/MISS comes from the local origin path, X-Traforo-Cache-Reason explai
 
     /traforo-status         Check if tunnel is online
     /traforo-upstream       WebSocket endpoint for local client
+    /traforo-login          POST endpoint for password login
     /*                      All other paths proxied to local server
 
 ## LIBRARY USAGE
@@ -95,7 +114,8 @@ When BYPASS/MISS comes from the local origin path, X-Traforo-Cache-Reason explai
     const client = new TunnelClient({
       localPort: 3000,
       tunnelId: 'my-app',
-      cacheKey: 'v1',  // optional: enable edge caching
+      cacheKey: 'v1',       // optional: enable edge caching
+      password: 'mysecret', // optional: password protection
     })
 
     await client.connect()

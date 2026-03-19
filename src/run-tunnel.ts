@@ -14,6 +14,8 @@ export type RunTunnelOptions = {
   command?: string[]
   /** Enable edge caching with optional partition key */
   cacheKey?: string
+  /** Password to protect the tunnel */
+  password?: string
 }
 
 /**
@@ -136,12 +138,17 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     ...(options.baseDomain && { baseDomain: options.baseDomain }),
     ...(options.serverUrl && { serverUrl: options.serverUrl }),
     ...(options.cacheKey && { cacheKey: options.cacheKey }),
+    ...(options.password && { password: options.password }),
   })
 
   if (options.cacheKey) {
     console.log(
       `Edge caching enabled (key: ${options.cacheKey})`,
     )
+  }
+
+  if (options.password) {
+    console.log(`Password protection enabled`)
   }
 
   // Handle shutdown

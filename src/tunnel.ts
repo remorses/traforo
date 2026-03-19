@@ -130,6 +130,8 @@ export class Tunnel {
   private pendingWsConnections: Map<string, PendingWsConnection> = new Map()
   /** Cache key for edge caching, null when caching is disabled */
   private cacheKey: string | null = null
+  /** Password for tunnel protection, null when no password is set */
+  private password: string | null = null
 
   constructor(state: DurableObjectState, env: Env) {
     this.ctx = state
@@ -164,10 +166,30 @@ export class Tunnel {
         } else {
           this.cacheKey = null
         }
+        // Parse password from upstream connection params
+        const password = url.searchParams.get('_password')
+        if (password) {
+          this.password = password
+          console.log(`[DO] Password protection enabled`)
+        } else {
+          this.password = null
+        }
         console.log(`[DO] Handling upstream connection for ${tunnelId}`)
         return this.handleUpstreamConnection(tunnelId)
       }
       // User WebSocket connection to be proxied
+      // Password check for WebSocket upgrades
+      if (this.password) {
+        const cookie = parseCookie(req.headers.get('cookie') || '')
+        if (cookie['traforo-password'] !== this.password) {
+          // Can't show HTML for WS upgrades, reject with close code
+          const pair = new WebSocketPair()
+          const [client, server] = Object.values(pair)
+          server.accept()
+          server.close(4013, 'Unauthorized: invalid or missing password')
+          return new Response(null, { status: 101, webSocket: client })
+        }
+      }
       // Include query params (minus _tunnelId) so tokens like ?token=xxx are forwarded
       url.searchParams.delete('_tunnelId')
       const wsPath = url.pathname + url.search
@@ -187,9 +209,89 @@ export class Tunnel {
       })
     }
 
+    // Password login endpoint
+    if (url.pathname === '/traforo-login' && req.method === 'POST') {
+      return this.handleLogin(req)
+    }
+
+    // Password protection check for HTTP requests
+    const passwordResponse = this.checkPassword(req)
+    if (passwordResponse) {
+      return passwordResponse
+    }
+
     // HTTP request to be proxied
     console.log(`[DO] HTTP proxy request ${req.method} ${url.pathname}`)
     return this.handleHttpProxy(tunnelId, req)
+  }
+
+  // ============================================
+  // Password Protection
+  // ============================================
+
+  /**
+   * Check if the request has a valid password cookie.
+   * Returns null if no password is set or cookie is valid.
+   * Returns a 401 Response if unauthorized.
+   */
+  private checkPassword(req: Request): Response | null {
+    if (!this.password) {
+      return null
+    }
+
+    const cookie = parseCookie(req.headers.get('cookie') || '')
+    if (cookie['traforo-password'] === this.password) {
+      return null
+    }
+
+    // Determine if this is a browser request
+    const accept = req.headers.get('accept') || ''
+    const isBrowser = accept.includes('text/html')
+
+    if (isBrowser) {
+      return new Response(passwordHtml(), {
+        status: 401,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
+    }
+
+    return new Response(
+      'Unauthorized: this tunnel is password protected.\n' +
+        'Pass the password as a cookie:\n\n' +
+        "  curl -b 'traforo-password=YOUR_PASSWORD' URL\n",
+      {
+        status: 401,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      },
+    )
+  }
+
+  /**
+   * Handle POST /traforo-login — validate password and set cookie.
+   */
+  private async handleLogin(req: Request): Promise<Response> {
+    if (!this.password) {
+      return new Response('No password configured', { status: 400 })
+    }
+
+    const formData = await req.formData()
+    const submitted = formData.get('password')
+
+    if (typeof submitted !== 'string' || submitted !== this.password) {
+      return new Response(passwordHtml('Incorrect password'), {
+        status: 401,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
+    }
+
+    // Password correct — set cookie and redirect to /
+    return new Response(null, {
+      status: 303,
+      headers: {
+        Location: '/',
+        'Set-Cookie': `traforo-password=${encodeURIComponent(this.password)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`,
+      },
+    })
   }
 
   // ============================================
@@ -879,7 +981,154 @@ function getRateLimitKey(req: Request): string {
   return 'unknown-client'
 }
 
+function parseCookie(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {}
+  for (const pair of cookieHeader.split(';')) {
+    const [name, ...rest] = pair.split('=')
+    if (name) {
+      const key = name.trim()
+      const value = decodeURIComponent(rest.join('=').trim())
+      if (key) {
+        cookies[key] = value
+      }
+    }
+  }
+  return cookies
+}
+
 const html = dedent
+function passwordHtml(error?: string): string {
+  const errorBlock = error
+    ? `<p class="error">${error}</p>`
+    : ''
+  const htmlStr = html`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Password Required</title>
+        <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          body {
+            font-family:
+              -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+              'Helvetica Neue', Arial, sans-serif;
+            background: #fff;
+            color: #111;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            line-height: 1.6;
+          }
+          .container {
+            max-width: 380px;
+            width: 100%;
+          }
+          h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.02em;
+          }
+          p {
+            color: #444;
+            margin-bottom: 1.5rem;
+          }
+          .error {
+            color: #dc2626;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+          }
+          form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+          }
+          input[type='password'] {
+            font-family: inherit;
+            font-size: 0.9375rem;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            outline: none;
+            transition: border-color 0.15s;
+          }
+          input[type='password']:focus {
+            border-color: #111;
+          }
+          button {
+            font-family: inherit;
+            font-size: 0.9375rem;
+            font-weight: 500;
+            padding: 0.5rem 0.75rem;
+            background: #111;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+          }
+          button:hover {
+            background: #333;
+          }
+          @media (prefers-color-scheme: dark) {
+            body {
+              background: #111;
+              color: #eee;
+            }
+            p {
+              color: #aaa;
+            }
+            .error {
+              color: #f87171;
+            }
+            input[type='password'] {
+              background: #1a1a1a;
+              border-color: #333;
+              color: #eee;
+            }
+            input[type='password']:focus {
+              border-color: #eee;
+            }
+            button {
+              background: #eee;
+              color: #111;
+            }
+            button:hover {
+              background: #ccc;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Password Required</h1>
+          <p>This tunnel is protected. Enter the password to continue.</p>
+          ${errorBlock}
+          <form method="POST" action="/traforo-login">
+            <input
+              type="password"
+              name="password"
+              placeholder="Password"
+              autofocus
+              required
+            />
+            <button type="submit">Continue</button>
+          </form>
+        </div>
+      </body>
+    </html>
+  `
+  return htmlStr
+}
+
 function offlineHtml(tunnelId: string): string {
   const htmlStr = html`
     <!DOCTYPE html>

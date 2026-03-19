@@ -41,6 +41,8 @@ type TunnelClientOptions = {
   reconnectDelay?: number
   /** Enable edge caching with this partition key */
   cacheKey?: string
+  /** Password to protect the tunnel */
+  password?: string
 }
 
 export class TunnelClient {
@@ -75,6 +77,9 @@ export class TunnelClient {
     let wsUrl = `${this.options.serverUrl}/traforo-upstream?_tunnelId=${this.options.tunnelId}`
     if (this.options.cacheKey) {
       wsUrl += `&_cacheKey=${encodeURIComponent(this.options.cacheKey)}`
+    }
+    if (this.options.password) {
+      wsUrl += `&_password=${encodeURIComponent(this.options.password)}`
     }
     // console.log(`Connecting to ${wsUrl}...`)
 
