@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.0
+
+1. **Password protection for tunnels** — restrict access with `--password`:
+
+   ```bash
+   traforo -p 3000 --password mysecret
+   ```
+
+   Visitors in a browser see a styled login page. After entering the correct
+   password a `traforo-password` cookie is set and they can browse normally.
+
+   Non-browser clients (curl, APIs) get a 401 with instructions:
+
+   ```bash
+   curl -b 'traforo-password=mysecret' https://my-app-tunnel.traforo.dev
+   ```
+
+   WebSocket upgrades without a valid cookie are rejected with close code 4013.
+
+2. **Library API: `password` option** — pass password when using `TunnelClient` or `runTunnel` directly:
+
+   ```ts
+   const client = new TunnelClient({
+     localPort: 3000,
+     tunnelId: 'my-app',
+     password: 'mysecret',
+   })
+   ```
+
+3. **Fixed crash on malformed cookies** — a `Cookie` header with percent-encoded garbage no longer throws a 500; invalid values fall back to raw strings.
+
 ## 0.0.9
 
 ### Highlights
