@@ -23,6 +23,10 @@ cli
     '--password <password>',
     'Protect the tunnel with a password (visitors must enter it to access)',
   )
+  .option(
+    '-k, --kill',
+    'Kill any existing process on the port before starting',
+  )
   .example(`${CLI_NAME} -p 3000`)
   .example(`${CLI_NAME} -p 3000 -- next start`)
   .example(`${CLI_NAME} -p 3000 -- pnpm dev`)
@@ -37,6 +41,7 @@ cli
       server?: string
       cache?: string | boolean
       password?: string
+      kill?: boolean
     }) => {
       if (!options.port) {
         console.error('Error: --port is required')
@@ -65,6 +70,7 @@ cli
         command: command.length > 0 ? command : undefined,
         cacheKey,
         password: options.password,
+        kill: options.kill,
       })
     },
   )

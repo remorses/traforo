@@ -1,6 +1,9 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { exec, spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
+import { promisify } from 'node:util'
 import { TunnelClient } from './client.js'
+
+const execPromise = promisify(exec)
 
 export const CLI_NAME = 'traforo'
 const DEFAULT_TUNNEL_ID_LENGTH = 16
@@ -16,6 +19,8 @@ export type RunTunnelOptions = {
   cacheKey?: string
   /** Password to protect the tunnel */
   password?: string
+  /** Kill any existing process on the port before starting */
+  kill?: boolean
 }
 
 /**
@@ -57,6 +62,115 @@ async function waitForPort(
 }
 
 /**
+ * Check if a port is currently in use (something is listening).
+ */
+async function isPortInUse(port: number, host = 'localhost'): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket()
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve(true)
+    })
+    socket.once('error', () => {
+      socket.destroy()
+      resolve(false)
+    })
+    socket.connect(port, host)
+  })
+}
+
+/**
+ * Kill any process listening on the given port.
+ * Cross-platform: uses lsof on macOS/Linux, netstat+taskkill on Windows.
+ * Never throws — silently succeeds if no process is found or kill fails.
+ */
+async function killProcessOnPort(port: number): Promise<void> {
+  try {
+    const inUse = await isPortInUse(port)
+    if (!inUse) {
+      return
+    }
+
+    console.log(`Killing process on port ${port}...`)
+
+    if (process.platform === 'win32') {
+      // Windows: parse netstat output to find PIDs listening on the port
+      const { stdout } = await execPromise(
+        `netstat -ano | findstr :${port} | findstr LISTENING`,
+      )
+      const pids = new Set<number>()
+      for (const line of stdout.trim().split('\n')) {
+        const parts = line.trim().split(/\s+/)
+        const pid = parseInt(parts[parts.length - 1]!, 10)
+        if (!isNaN(pid) && pid > 0) {
+          pids.add(pid)
+        }
+      }
+      for (const pid of pids) {
+        try {
+          await execPromise(`taskkill /PID ${pid} /F`)
+        } catch {}
+      }
+    } else {
+      // macOS / Linux: lsof returns PIDs listening on tcp port
+      const { stdout } = await execPromise(`lsof -ti tcp:${port}`)
+      const pids = stdout
+        .trim()
+        .split('\n')
+        .map((s) => {
+          return parseInt(s, 10)
+        })
+        .filter((n) => {
+          return !isNaN(n) && n > 0
+        })
+      for (const pid of pids) {
+        try {
+          process.kill(pid, 'SIGTERM')
+        } catch {}
+      }
+    }
+
+    // Brief wait for the port to actually free up
+    const maxWait = 3_000
+    const start = Date.now()
+    while (Date.now() - start < maxWait) {
+      const stillInUse = await isPortInUse(port)
+      if (!stillInUse) {
+        console.log(`Port ${port} is now free`)
+        return
+      }
+      await new Promise((r) => {
+        return setTimeout(r, 200)
+      })
+    }
+
+    // If SIGTERM didn't work on POSIX, try SIGKILL as last resort
+    if (process.platform !== 'win32') {
+      try {
+        const { stdout } = await execPromise(`lsof -ti tcp:${port}`)
+        const pids = stdout
+          .trim()
+          .split('\n')
+          .map((s) => {
+            return parseInt(s, 10)
+          })
+          .filter((n) => {
+            return !isNaN(n) && n > 0
+          })
+        for (const pid of pids) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {}
+        }
+      } catch {}
+    }
+  } catch {
+    // Never crash — if anything fails, just continue and let the
+    // child process or port-wait logic surface the actual error
+  }
+}
+
+/**
  * Parse argv to extract command after `--` separator.
  * Returns the command array and remaining argv without the command.
  */
@@ -85,6 +199,11 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     crypto.randomUUID().replaceAll('-', '').slice(0, DEFAULT_TUNNEL_ID_LENGTH)
   const localHost = options.localHost || 'localhost'
   const port = options.port
+
+  // Kill existing process on port if requested
+  if (options.kill) {
+    await killProcessOnPort(port)
+  }
 
   let child: ChildProcess | null = null
 
