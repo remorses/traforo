@@ -32,6 +32,8 @@ type Attachment = {
   tunnelId: string
   /** Password stored on upstream attachment, survives DO hibernation */
   password?: string
+  /** Edge cache partition key, survives DO hibernation */
+  cacheKey?: string
 }
 
 type CacheContext = {
@@ -139,10 +141,8 @@ export class Tunnel {
     this.ctx = state
     this.env = env
 
-    // Auto-respond to ping messages without waking DO
-    this.ctx.setWebSocketAutoResponse(
-      new WebSocketRequestResponsePair('ping', 'pong'),
-    )
+    // Auto-respond to JSON ping messages without waking the DO.
+    // Only one auto-response pair can be active (second call overrides first).
     this.ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'),
     )
@@ -340,6 +340,7 @@ export class Tunnel {
       role: 'upstream',
       tunnelId,
       ...(this.password && { password: this.password }),
+      ...(this.cacheKey && { cacheKey: this.cacheKey }),
     } satisfies Attachment)
 
     // Notify any waiting downstream connections
@@ -378,6 +379,25 @@ export class Tunnel {
     return null
   }
 
+  /**
+   * Get the cache key, recovering from the upstream WS attachment if the DO
+   * was hibernated and this.cacheKey was lost from memory.
+   */
+  private getCacheKey(tunnelId: string): string | null {
+    if (this.cacheKey) {
+      return this.cacheKey
+    }
+    const upstream = this.getUpstream(tunnelId)
+    if (upstream) {
+      const attachment = upstream.deserializeAttachment() as Attachment | undefined
+      if (attachment?.cacheKey) {
+        this.cacheKey = attachment.cacheKey
+        return this.cacheKey
+      }
+    }
+    return null
+  }
+
   // ============================================
   // HTTP Proxy
   // ============================================
@@ -391,9 +411,11 @@ export class Tunnel {
     url.searchParams.delete('_tunnelId')
 
     // Capture immutable cache context at request time to avoid race conditions
-    // if the upstream reconnects with a different --cache key mid-flight
-    const cacheContext: CacheContext | undefined = this.cacheKey
-      ? { tunnelId, cacheKey: this.cacheKey }
+    // if the upstream reconnects with a different --cache key mid-flight.
+    // getCacheKey() recovers the key from WS attachment after hibernation.
+    const cacheKey = this.getCacheKey(tunnelId)
+    const cacheContext: CacheContext | undefined = cacheKey
+      ? { tunnelId, cacheKey }
       : undefined
 
     // Build a clean cache request (without internal params)
@@ -469,7 +491,8 @@ export class Tunnel {
 
     try {
       upstream.send(JSON.stringify(message) satisfies string)
-    } catch {
+    } catch (err) {
+      console.error(`[DO] upstream.send() failed for ${tunnelId} reqId=${reqId}:`, err)
       return new Response('Failed to send to tunnel', { status: 502 })
     }
 
@@ -551,7 +574,8 @@ export class Tunnel {
 
     try {
       upstream.send(JSON.stringify(message) satisfies string)
-    } catch {
+    } catch (err) {
+      console.error(`[DO] upstream.send() failed for WS ${connId}:`, err)
       server.close(4009, 'Failed to contact tunnel')
       return new Response(null, {
         status: 101,
@@ -629,14 +653,14 @@ export class Tunnel {
       }
 
       // Reject all pending HTTP requests
-      for (const [reqId, pending] of this.pendingHttpRequests) {
+      for (const [, pending] of this.pendingHttpRequests) {
         clearTimeout(pending.timeout)
         pending.resolve(new Response('Tunnel disconnected', { status: 502 }))
       }
       this.pendingHttpRequests.clear()
 
       // Close all streaming HTTP requests
-      for (const [reqId, streaming] of this.streamingHttpRequests) {
+      for (const [, streaming] of this.streamingHttpRequests) {
         clearTimeout(streaming.timeout)
         try {
           streaming.writer.close()
@@ -652,6 +676,26 @@ export class Tunnel {
         } catch {}
       }
       this.pendingWsConnections.clear()
+    } else if (attachment.role === 'downstream') {
+      // Downstream (user) WS closed — forward close to upstream so the
+      // local client can clean up its corresponding localWsConnections entry
+      const tags = this.ctx.getTags(ws)
+      const wsTag = tags.find((t) => t.startsWith('ws:'))
+      if (wsTag) {
+        const connId = wsTag.replace('ws:', '')
+        const upstream = this.getUpstream(attachment.tunnelId)
+        if (upstream) {
+          const closeMsg: WsCloseMessage = {
+            type: 'ws_close',
+            connId,
+            code,
+            reason,
+          }
+          try {
+            upstream.send(JSON.stringify(closeMsg))
+          } catch {}
+        }
+      }
     }
   }
 

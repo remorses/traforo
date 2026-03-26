@@ -45,11 +45,20 @@ type TunnelClientOptions = {
   password?: string
 }
 
+/**
+ * Interval (ms) between keepalive pings sent to the DO.
+ * Cloudflare's CDN has a ~100s inactivity timeout on WebSockets.
+ * The DO's setWebSocketAutoResponse handles these at the edge without
+ * waking the DO from hibernation, so this is zero-cost.
+ */
+const PING_INTERVAL_MS = 30_000
+
 export class TunnelClient {
   private options: Required<TunnelClientOptions>
   private ws: WebSocket | null = null
   private localWsConnections: Map<string, WebSocket> = new Map()
   private closed = false
+  private pingInterval: ReturnType<typeof setInterval> | null = null
 
   constructor(options: TunnelClientOptions) {
     const baseDomain = options.baseDomain || 'traforo.dev'
@@ -88,6 +97,7 @@ export class TunnelClient {
 
       this.ws.on('open', () => {
         console.log(`Connected with Traforo! Tunnel URL: ${this.url}`)
+        this.startPingInterval()
         resolve()
       })
 
@@ -98,6 +108,7 @@ export class TunnelClient {
 
       this.ws.on('close', (code: number, reason: Buffer) => {
         console.log(`Disconnected: ${code} ${reason.toString()}`)
+        this.stopPingInterval()
         this.ws = null
 
         // Close all local WS connections
@@ -125,6 +136,7 @@ export class TunnelClient {
 
   close(): void {
     this.closed = true
+    this.stopPingInterval()
     if (this.ws) {
       this.ws.close()
       this.ws = null
@@ -135,6 +147,28 @@ export class TunnelClient {
       } catch {}
     }
     this.localWsConnections.clear()
+  }
+
+  private startPingInterval(): void {
+    this.stopPingInterval()
+    this.pingInterval = setInterval(() => {
+      const ws = this.ws
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return
+      }
+      try {
+        ws.send('{"type":"ping"}')
+      } catch {
+        // readyState can flip between check and send(); safe to ignore
+      }
+    }, PING_INTERVAL_MS)
+  }
+
+  private stopPingInterval(): void {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval)
+      this.pingInterval = null
+    }
   }
 
   private handleMessage(rawMessage: string): void {
