@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { exec, spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
 import { promisify } from 'node:util'
@@ -6,7 +7,11 @@ import { TunnelClient } from './client.js'
 const execPromise = promisify(exec)
 
 export const CLI_NAME = 'traforo'
-const DEFAULT_TUNNEL_ID_LENGTH = 16
+const DEFAULT_TUNNEL_ID_BYTES = 16
+
+export function createRandomTunnelId(): string {
+  return crypto.randomBytes(DEFAULT_TUNNEL_ID_BYTES).toString('hex')
+}
 
 export type RunTunnelOptions = {
   port: number
@@ -194,10 +199,7 @@ export function parseCommandFromArgv(argv: string[]): {
  * Run the tunnel, optionally spawning a child process first.
  */
 export async function runTunnel(options: RunTunnelOptions): Promise<void> {
-  const tunnelId =
-    options.tunnelId ||
-    crypto.randomUUID().replaceAll('-', '').slice(0, DEFAULT_TUNNEL_ID_LENGTH) +
-      options.port
+  const tunnelId = options.tunnelId || createRandomTunnelId()
   const localHost = options.localHost || 'localhost'
   const port = options.port
 
