@@ -2,16 +2,16 @@ import { describe, expect, test } from 'vitest'
 import { createRandomTunnelId, parseCommandFromArgv } from './run-tunnel.js'
 
 describe('run-tunnel security defaults', () => {
-  test('generates a non-guessable default tunnel id', () => {
+  test('generates a non-guessable default tunnel id with port suffix', () => {
     const ids = new Set(
       Array.from({ length: 32 }, () => {
-        return createRandomTunnelId()
+        return createRandomTunnelId({ port: 3000 })
       }),
     )
 
     expect(ids.size).toBe(32)
     for (const id of ids) {
-      expect(id).toMatch(/^[0-9a-f]{32}$/)
+      expect(id).toMatch(/^[0-9a-f]{32}-3000$/)
     }
   })
 

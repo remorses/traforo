@@ -9,8 +9,8 @@ const execPromise = promisify(exec)
 export const CLI_NAME = 'traforo'
 const DEFAULT_TUNNEL_ID_BYTES = 16
 
-export function createRandomTunnelId(): string {
-  return crypto.randomBytes(DEFAULT_TUNNEL_ID_BYTES).toString('hex')
+export function createRandomTunnelId({ port }: { port: number }): string {
+  return `${crypto.randomBytes(DEFAULT_TUNNEL_ID_BYTES).toString('hex')}-${port}`
 }
 
 export type RunTunnelOptions = {
@@ -199,9 +199,9 @@ export function parseCommandFromArgv(argv: string[]): {
  * Run the tunnel, optionally spawning a child process first.
  */
 export async function runTunnel(options: RunTunnelOptions): Promise<void> {
-  const tunnelId = options.tunnelId || createRandomTunnelId()
   const localHost = options.localHost || 'localhost'
   const port = options.port
+  const tunnelId = options.tunnelId || createRandomTunnelId({ port })
 
   // Kill existing process on port if requested
   if (options.kill) {
