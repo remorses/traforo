@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0
+
+1. **New `--kill` flag** — automatically kill whatever is already running on the target port before starting the tunnel:
+
+   ```bash
+   traforo -p 3000 --kill
+   ```
+
+   Useful when restarting dev servers that leave orphaned processes on the port.
+
+2. **Port number in default tunnel ID** — auto-generated tunnel IDs now include the port, making it easier to tell tunnels apart at a glance:
+
+   ```
+   Before: a1b2c3d4e5f6g7h8
+   After:  a1b2c3d4e5f6g7h83000
+   ```
+
+3. **Fixed WebSocket disconnects after ~100s of idle** — the Cloudflare CDN drops connections with no traffic after ~100 seconds. The client now sends a `ping` frame every 30s, handled entirely at the Cloudflare edge via auto-response (no DO wake-up, zero billing impact).
+
 ## 0.1.0
 
 1. **Password protection for tunnels** — restrict access with `--password`:
