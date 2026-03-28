@@ -196,7 +196,8 @@ export function parseCommandFromArgv(argv: string[]): {
 export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   const tunnelId =
     options.tunnelId ||
-    crypto.randomUUID().replaceAll('-', '').slice(0, DEFAULT_TUNNEL_ID_LENGTH)
+    crypto.randomUUID().replaceAll('-', '').slice(0, DEFAULT_TUNNEL_ID_LENGTH) +
+      options.port
   const localHost = options.localHost || 'localhost'
   const port = options.port
 
