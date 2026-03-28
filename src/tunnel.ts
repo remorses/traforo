@@ -1343,7 +1343,7 @@ function offlineHtml(tunnelId: string): string {
     tmux new-session -d -s dev
 
     <span class="comment"># Start your dev server with tunnel</span>
-    tmux send-keys -t dev "npx kimaki tunnel -p 3000 -- pnpm dev" Enter
+    tmux send-keys -t dev "npx kimaki tunnel --kill -p 3000 -- pnpm dev" Enter
 
     <span class="comment"># View the tunnel URL</span>
     tmux capture-pane -t dev -p | grep tunnel</code></pre>
