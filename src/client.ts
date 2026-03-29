@@ -96,7 +96,7 @@ export class TunnelClient {
       this.ws = new WebSocket(wsUrl)
 
       this.ws.on('open', () => {
-        console.log(`Connected with Traforo! Tunnel URL: ${this.url}`)
+        console.log(`Connected with Traforo!\n${this.url}`)
         this.startPingInterval()
         resolve()
       })

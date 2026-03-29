@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1
+
+1. **Default tunnel IDs are now non-guessable** — auto-generated tunnel IDs use 128 bits of cryptographic randomness followed by the local port, making them safe to use as public URLs without a custom ID:
+
+   ```
+   Before: a1b2c3d4e5f63000   (truncated UUID — only ~64 bits random)
+   After:  a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6-3000   (128 bits + port)
+   ```
+
+   Explicit `--tunnel-id` still works as before for intentional public exposure.
+
+2. **Tunnel URL starts at the beginning of the line** — the connection message now prints the URL on its own line so it doesn't wrap on narrow terminals and stays easy to copy:
+
+   ```
+   Connected with Traforo!
+   https://a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6-3000.traforo.dev
+   ```
+
 ## 0.2.0
 
 1. **New `--kill` flag** — automatically kill whatever is already running on the target port before starting the tunnel:
