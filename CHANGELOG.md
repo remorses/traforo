@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2
+
+1. **Shorter default tunnel IDs** — reduced from 128 bits to 80 bits (20 hex chars). Still non-guessable but shorter URLs:
+
+   ```
+   a1b2c3d4e5f6a7b8c9d0-3000.traforo.dev
+   ```
+
 ## 0.2.1
 
 1. **Default tunnel IDs are now non-guessable** — auto-generated tunnel IDs use 128 bits of cryptographic randomness followed by the local port, making them safe to use as public URLs without a custom ID:

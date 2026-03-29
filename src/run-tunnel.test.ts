@@ -11,7 +11,7 @@ describe('run-tunnel security defaults', () => {
 
     expect(ids.size).toBe(32)
     for (const id of ids) {
-      expect(id).toMatch(/^[0-9a-f]{32}-3000$/)
+      expect(id).toMatch(/^[0-9a-f]{20}-3000$/)
     }
   })
 

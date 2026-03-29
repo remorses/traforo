@@ -7,7 +7,7 @@ import { TunnelClient } from './client.js'
 const execPromise = promisify(exec)
 
 export const CLI_NAME = 'traforo'
-const DEFAULT_TUNNEL_ID_BYTES = 16
+const DEFAULT_TUNNEL_ID_BYTES = 10
 
 export function createRandomTunnelId({ port }: { port: number }): string {
   return `${crypto.randomBytes(DEFAULT_TUNNEL_ID_BYTES).toString('hex')}-${port}`
