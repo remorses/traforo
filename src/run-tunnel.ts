@@ -3,6 +3,12 @@ import { exec, spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
 import { promisify } from 'node:util'
 import { TunnelClient } from './client.js'
+import {
+  writeLockfile,
+  readLockfile,
+  removeLockfile,
+  isLockfileStale,
+} from './lockfile.js'
 
 const execPromise = promisify(exec)
 
@@ -206,6 +212,61 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   // Kill existing process on port if requested
   if (options.kill) {
     await killProcessOnPort(port)
+    removeLockfile(port)
+  }
+
+  // Pre-flight: detect port conflict before spawning the child process
+  if (options.command && options.command.length > 0 && !options.kill) {
+    const portBusy = await isPortInUse(port, localHost)
+    if (portBusy) {
+      const lock = readLockfile(port)
+      if (lock && !isLockfileStale(lock)) {
+        const currentCwd = process.cwd()
+        const currentCmd = options.command
+        const sameCwd = lock.cwd === currentCwd
+        const sameCmd =
+          lock.command &&
+          lock.command.length === currentCmd.length &&
+          lock.command.every((arg, i) => arg === currentCmd[i])
+
+        if (sameCwd && sameCmd) {
+          // Same command in same directory — tell agent to reuse the tunnel
+          console.error(`Error: Port ${port} is already in use\n`)
+          console.error(`  Tunnel:  ${lock.tunnelUrl}`)
+          console.error(`  ID:      ${lock.tunnelId}`)
+          console.error(`  Command: ${lock.command?.join(' ') ?? 'unknown'}`)
+          console.error(`  Dir:     ${lock.cwd}`)
+          console.error(`  PID:     ${lock.pid}`)
+          console.error(`  Started: ${lock.startedAt}\n`)
+          console.error(
+            `The same command in the same directory is already tunneled.`,
+          )
+          console.error(`Reuse the tunnel URL above instead of creating a new one.`)
+          process.exit(1)
+        } else {
+          // Different command or directory — suggest --kill
+          console.error(`Error: Port ${port} is already in use\n`)
+          console.error(`  Tunnel:  ${lock.tunnelUrl}`)
+          console.error(`  ID:      ${lock.tunnelId}`)
+          console.error(`  Command: ${lock.command?.join(' ') ?? 'unknown'}`)
+          console.error(`  Dir:     ${lock.cwd}`)
+          console.error(`  PID:     ${lock.pid}`)
+          console.error(`  Started: ${lock.startedAt}\n`)
+          console.error(
+            `Use --kill to terminate the existing process and start fresh:`,
+          )
+          console.error(`  traforo -p ${port} --kill -- ${options.command.join(' ')}`)
+          process.exit(1)
+        }
+      } else {
+        // Port busy but no lockfile or stale lockfile — unknown process
+        if (lock) removeLockfile(port)
+        console.error(`Error: Port ${port} is already in use by another process.\n`)
+        console.error(`Use --kill to terminate it before starting:`)
+        console.error(`  traforo -p ${port} --kill -- ${options.command.join(' ')}`)
+        process.exit(1)
+      }
+    }
   }
 
   let child: ChildProcess | null = null
@@ -238,6 +299,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
 
     spawnedChild.on('exit', (code) => {
       console.log(`\nCommand exited with code ${code}`)
+      removeLockfile(port)
       process.exit(code || 0)
     })
 
@@ -276,6 +338,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   // Handle shutdown
   const cleanup = () => {
     console.log('\nShutting down...')
+    removeLockfile(port)
     client.close()
     if (child) {
       child.kill()
@@ -288,6 +351,17 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
 
   try {
     await client.connect()
+
+    // Write lockfile so other traforo instances can detect this tunnel
+    writeLockfile(port, {
+      tunnelId,
+      tunnelUrl: client.url,
+      port,
+      pid: child?.pid ?? process.pid,
+      command: options.command,
+      cwd: process.cwd(),
+      startedAt: new Date().toISOString(),
+    })
   } catch (err) {
     console.error(
       'Failed to connect:',
