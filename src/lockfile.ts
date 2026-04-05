@@ -16,7 +16,10 @@ export type LockfileData = {
   tunnelId: string
   tunnelUrl: string
   port: number
-  pid: number
+  /** PID of the traforo tunnel process (used for liveness checks) */
+  tunnelPid: number
+  /** PID of the child server process, if any */
+  serverPid?: number
   command: string[] | undefined
   cwd: string
   startedAt: string
@@ -44,8 +47,21 @@ export function readLockfile(port: number): LockfileData | null {
   }
 }
 
-export function removeLockfile(port: number): void {
+/**
+ * Remove lockfile only if it belongs to this traforo instance.
+ * Prevents a late-exiting old process from deleting a newer instance's lockfile.
+ */
+export function removeLockfile(
+  port: number,
+  expectedTunnelPid?: number,
+): void {
   try {
+    if (expectedTunnelPid != null) {
+      const lock = readLockfile(port)
+      if (lock && lock.tunnelPid !== expectedTunnelPid) {
+        return // not ours — leave it alone
+      }
+    }
     fs.unlinkSync(lockfilePath(port))
   } catch {
     // Already gone or never existed
@@ -53,13 +69,15 @@ export function removeLockfile(port: number): void {
 }
 
 /**
- * Check if the PID in a lockfile is still alive.
- * Returns false (stale) if the process no longer exists.
+ * Check if the tunnel process in a lockfile is still alive.
+ * Uses tunnelPid (the traforo process) not serverPid, because
+ * the tunnel URL is only valid while the traforo process is running.
+ * Returns true (stale) if the tunnel process no longer exists.
  */
 export function isLockfileStale(lock: LockfileData): boolean {
   try {
     // signal 0 doesn't kill — just checks if process exists
-    process.kill(lock.pid, 0)
+    process.kill(lock.tunnelPid, 0)
     return false
   } catch {
     return true

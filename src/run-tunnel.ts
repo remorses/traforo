@@ -212,7 +212,14 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   // Kill existing process on port if requested
   if (options.kill) {
     await killProcessOnPort(port)
-    removeLockfile(port)
+    removeLockfile(port) // no ownership check — --kill is intentional
+
+    // Verify the port actually freed up
+    if (await isPortInUse(port, localHost)) {
+      console.error(`Error: Port ${port} is still in use after --kill.`)
+      console.error(`The process may require elevated permissions to terminate.`)
+      process.exit(1)
+    }
   }
 
   // Pre-flight: detect port conflict before spawning the child process
@@ -236,7 +243,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
           console.error(`  ID:      ${lock.tunnelId}`)
           console.error(`  Command: ${lock.command?.join(' ') ?? 'unknown'}`)
           console.error(`  Dir:     ${lock.cwd}`)
-          console.error(`  PID:     ${lock.pid}`)
+          console.error(`  PID:     ${lock.tunnelPid}`)
           console.error(`  Started: ${lock.startedAt}\n`)
           console.error(
             `The same command in the same directory is already tunneled.`,
@@ -244,17 +251,18 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
           console.error(`Reuse the tunnel URL above instead of creating a new one.`)
           process.exit(1)
         } else {
-          // Different command or directory — suggest --kill
+          // Different command or directory — suggest --kill or reuse
           console.error(`Error: Port ${port} is already in use\n`)
           console.error(`  Tunnel:  ${lock.tunnelUrl}`)
           console.error(`  ID:      ${lock.tunnelId}`)
           console.error(`  Command: ${lock.command?.join(' ') ?? 'unknown'}`)
           console.error(`  Dir:     ${lock.cwd}`)
-          console.error(`  PID:     ${lock.pid}`)
+          console.error(`  PID:     ${lock.tunnelPid}`)
           console.error(`  Started: ${lock.startedAt}\n`)
           console.error(
-            `Use --kill to terminate the existing process and start fresh:`,
+            `Use --kill to terminate the existing process and start fresh,`,
           )
+          console.error(`or just reuse the tunnel URL above instead:\n`)
           console.error(`  traforo -p ${port} --kill -- ${options.command.join(' ')}`)
           process.exit(1)
         }
@@ -299,7 +307,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
 
     spawnedChild.on('exit', (code) => {
       console.log(`\nCommand exited with code ${code}`)
-      removeLockfile(port)
+      removeLockfile(port, process.pid)
       process.exit(code || 0)
     })
 
@@ -338,7 +346,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   // Handle shutdown
   const cleanup = () => {
     console.log('\nShutting down...')
-    removeLockfile(port)
+    removeLockfile(port, process.pid)
     client.close()
     if (child) {
       child.kill()
@@ -357,7 +365,8 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
       tunnelId,
       tunnelUrl: client.url,
       port,
-      pid: child?.pid ?? process.pid,
+      tunnelPid: process.pid,
+      serverPid: child?.pid,
       command: options.command,
       cwd: process.cwd(),
       startedAt: new Date().toISOString(),

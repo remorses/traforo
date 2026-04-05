@@ -48,7 +48,8 @@ describe('lockfile', () => {
     tunnelId: 'abc123-59999',
     tunnelUrl: 'https://abc123-59999-tunnel.traforo.dev',
     port: TEST_PORT,
-    pid: process.pid,
+    tunnelPid: process.pid,
+    serverPid: process.pid + 1,
     command: ['pnpm', 'dev'],
     cwd: '/tmp/test-project',
     startedAt: new Date().toISOString(),
@@ -76,15 +77,27 @@ describe('lockfile', () => {
     expect(readLockfile(TEST_PORT)).toBeNull()
   })
 
-  test('isLockfileStale returns false when PID is alive', () => {
+  test('removeLockfile with matching tunnelPid deletes the file', () => {
+    writeLockfile(TEST_PORT, sampleLock)
+    removeLockfile(TEST_PORT, sampleLock.tunnelPid)
+    expect(readLockfile(TEST_PORT)).toBeNull()
+  })
+
+  test('removeLockfile with wrong tunnelPid leaves the file', () => {
+    writeLockfile(TEST_PORT, sampleLock)
+    removeLockfile(TEST_PORT, 999_999) // not our PID
+    expect(readLockfile(TEST_PORT)).not.toBeNull()
+  })
+
+  test('isLockfileStale returns false when tunnelPid is alive', () => {
     // Use current process PID which is guaranteed alive
-    const lock = { ...sampleLock, pid: process.pid }
+    const lock = { ...sampleLock, tunnelPid: process.pid }
     expect(isLockfileStale(lock)).toBe(false)
   })
 
-  test('isLockfileStale returns true when PID is dead', () => {
+  test('isLockfileStale returns true when tunnelPid is dead', () => {
     // PID 2_000_000 is almost certainly not running
-    const lock = { ...sampleLock, pid: 2_000_000 }
+    const lock = { ...sampleLock, tunnelPid: 2_000_000 }
     expect(isLockfileStale(lock)).toBe(true)
   })
 })
