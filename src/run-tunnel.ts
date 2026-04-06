@@ -13,6 +13,22 @@ import {
 const execPromise = promisify(exec)
 
 export const CLI_NAME = 'traforo'
+
+/**
+ * Shell-quote an argument array so the suggested command is copy-pasteable.
+ * Wraps args in single quotes if they contain shell-special characters.
+ */
+function shellQuote(args: string[]): string {
+  return args
+    .map((arg) => {
+      if (arg === '') return "''"
+      // Safe chars that don't need quoting
+      if (/^[a-zA-Z0-9._\-/:=@]+$/.test(arg)) return arg
+      // Wrap in single quotes, escaping any inner single quotes
+      return "'" + arg.replace(/'/g, "'\\''") + "'"
+    })
+    .join(' ')
+}
 const DEFAULT_TUNNEL_ID_BYTES = 10
 
 export function createRandomTunnelId({ port }: { port: number }): string {
@@ -212,14 +228,15 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   // Kill existing process on port if requested
   if (options.kill) {
     await killProcessOnPort(port)
-    removeLockfile(port) // no ownership check — --kill is intentional
 
-    // Verify the port actually freed up
+    // Verify the port actually freed up before removing the lockfile
     if (await isPortInUse(port, localHost)) {
       console.error(`Error: Port ${port} is still in use after --kill.`)
       console.error(`The process may require elevated permissions to terminate.`)
       process.exit(1)
     }
+
+    removeLockfile(port) // no ownership check — --kill is intentional
   }
 
   // Pre-flight: detect port conflict before spawning the child process
@@ -241,7 +258,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
           console.error(`Error: Port ${port} is already in use\n`)
           console.error(`  Tunnel:  ${lock.tunnelUrl}`)
           console.error(`  ID:      ${lock.tunnelId}`)
-          console.error(`  Command: ${lock.command?.join(' ') ?? 'unknown'}`)
+          console.error(`  Command: ${lock.command ? shellQuote(lock.command) : 'unknown'}`)
           console.error(`  Dir:     ${lock.cwd}`)
           console.error(`  PID:     ${lock.tunnelPid}`)
           console.error(`  Started: ${lock.startedAt}\n`)
@@ -255,7 +272,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
           console.error(`Error: Port ${port} is already in use\n`)
           console.error(`  Tunnel:  ${lock.tunnelUrl}`)
           console.error(`  ID:      ${lock.tunnelId}`)
-          console.error(`  Command: ${lock.command?.join(' ') ?? 'unknown'}`)
+          console.error(`  Command: ${lock.command ? shellQuote(lock.command) : 'unknown'}`)
           console.error(`  Dir:     ${lock.cwd}`)
           console.error(`  PID:     ${lock.tunnelPid}`)
           console.error(`  Started: ${lock.startedAt}\n`)
@@ -263,7 +280,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
             `Use --kill to terminate the existing process and start fresh,`,
           )
           console.error(`or just reuse the tunnel URL above instead:\n`)
-          console.error(`  traforo -p ${port} --kill -- ${options.command.join(' ')}`)
+          console.error(`  traforo -p ${port} --kill -- ${shellQuote(options.command)}`)
           process.exit(1)
         }
       } else {
@@ -271,7 +288,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
         if (lock) removeLockfile(port)
         console.error(`Error: Port ${port} is already in use by another process.\n`)
         console.error(`Use --kill to terminate it before starting:`)
-        console.error(`  traforo -p ${port} --kill -- ${options.command.join(' ')}`)
+        console.error(`  traforo -p ${port} --kill -- ${shellQuote(options.command)}`)
         process.exit(1)
       }
     }
@@ -284,7 +301,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     const cmd = options.command[0]!
     const args = options.command.slice(1)
 
-    console.log(`Starting: ${options.command.join(' ')}`)
+    console.log(`Starting: ${shellQuote(options.command)}`)
     console.log(`PORT=${port}\n`)
 
     const spawnedChild = spawn(cmd, args, {

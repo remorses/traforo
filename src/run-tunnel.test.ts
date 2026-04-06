@@ -1,10 +1,13 @@
-import { describe, expect, test, afterEach } from 'vitest'
+import { describe, expect, test, afterEach, beforeAll, afterAll } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { createRandomTunnelId, parseCommandFromArgv } from './run-tunnel.js'
 import {
   writeLockfile,
   readLockfile,
   removeLockfile,
   isLockfileStale,
+  getLockfileDir,
   type LockfileData,
 } from './lockfile.js'
 
@@ -41,8 +44,8 @@ describe('run-tunnel security defaults', () => {
 })
 
 describe('lockfile', () => {
-  // Use a high port unlikely to collide with real tunnels
   const TEST_PORT = 59_999
+  const testDir = path.resolve('tmp/test-traforo-lockfiles')
 
   const sampleLock: LockfileData = {
     tunnelId: 'abc123-59999',
@@ -54,6 +57,17 @@ describe('lockfile', () => {
     cwd: '/tmp/test-project',
     startedAt: new Date().toISOString(),
   }
+
+  beforeAll(() => {
+    // Redirect lockfiles to a local tmp dir so tests don't touch ~/.traforo
+    process.env.TRAFORO_HOME = testDir
+    fs.mkdirSync(testDir, { recursive: true })
+  })
+
+  afterAll(() => {
+    delete process.env.TRAFORO_HOME
+    fs.rmSync(testDir, { recursive: true, force: true })
+  })
 
   afterEach(() => {
     removeLockfile(TEST_PORT)
@@ -99,5 +113,12 @@ describe('lockfile', () => {
     // PID 2_000_000 is almost certainly not running
     const lock = { ...sampleLock, tunnelPid: 2_000_000 }
     expect(isLockfileStale(lock)).toBe(true)
+  })
+
+  test('TRAFORO_HOME env var overrides lockfile directory', () => {
+    expect(getLockfileDir()).toBe(testDir)
+    writeLockfile(TEST_PORT, sampleLock)
+    // File should exist inside testDir, not ~/.traforo
+    expect(fs.existsSync(path.join(testDir, `${TEST_PORT}.json`))).toBe(true)
   })
 })

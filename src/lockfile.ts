@@ -4,13 +4,17 @@
  * Stores one JSON file per active tunnel port in ~/.traforo/{port}.json.
  * Used to detect port conflicts, show tunnel info in error messages,
  * and let agents reuse existing tunnels instead of killing them.
+ *
+ * Override the lockfile directory with TRAFORO_HOME env var (useful for tests).
  */
 
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-const LOCKFILE_DIR = path.join(os.homedir(), '.traforo')
+export function getLockfileDir(): string {
+  return process.env.TRAFORO_HOME ?? path.join(os.homedir(), '.traforo')
+}
 
 export type LockfileData = {
   tunnelId: string
@@ -26,12 +30,13 @@ export type LockfileData = {
 }
 
 function lockfilePath(port: number): string {
-  return path.join(LOCKFILE_DIR, `${port}.json`)
+  return path.join(getLockfileDir(), `${port}.json`)
 }
 
 export function writeLockfile(port: number, data: LockfileData): void {
   try {
-    fs.mkdirSync(LOCKFILE_DIR, { recursive: true })
+    const dir = getLockfileDir()
+    fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(lockfilePath(port), JSON.stringify(data, null, 2) + '\n')
   } catch {
     // Non-critical — don't crash if we can't write the lockfile
@@ -79,7 +84,9 @@ export function isLockfileStale(lock: LockfileData): boolean {
     // signal 0 doesn't kill — just checks if process exists
     process.kill(lock.tunnelPid, 0)
     return false
-  } catch {
-    return true
+  } catch (error) {
+    // ESRCH = no such process (dead). EPERM = process exists but we
+    // can't signal it (e.g. PID 1) — treat as alive, not stale.
+    return (error as NodeJS.ErrnoException).code === 'ESRCH'
   }
 }
