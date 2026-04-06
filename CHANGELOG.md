@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.3
+
+1. **Port conflict detection before starting the dev server** — when running `traforo -p PORT -- command`, if the port is already occupied the CLI now exits with a clear error instead of silently connecting the tunnel to the wrong process:
+
+   ```
+   Error: Port 3000 is already in use
+
+     Tunnel:  https://abc123-3000-tunnel.traforo.dev
+     ID:      abc123-3000
+     Command: pnpm dev
+     Dir:     /Users/me/my-app
+     PID:     12345
+     Started: 2026-04-06T09:00:00Z
+
+   The same command in the same directory is already tunneled.
+   Reuse the tunnel URL above instead of creating a new one.
+   ```
+
+   If the existing tunnel is running a **different** command, the error suggests `--kill` but also shows the existing tunnel URL so you can choose to reuse it instead.
+
+2. **Tunnel lockfiles in `~/.traforo/`** — traforo now writes a `~/.traforo/{port}.json` file when a tunnel connects, storing the tunnel ID, URL, command, working directory, and PID. The file is removed on clean shutdown (`SIGINT`, `SIGTERM`, child exit). Stale lockfiles from crashed processes are detected via PID liveness check and ignored automatically.
+
+3. **`--kill` now verifies the port freed up** — if `--kill` fails to terminate the process (permission issues, slow shutdown), the CLI exits with an error instead of proceeding and silently attaching to the wrong server.
+
 ## 0.2.2
 
 1. **Shorter default tunnel IDs** — reduced from 128 bits to 80 bits (20 hex chars). Still non-guessable but shorter URLs:
