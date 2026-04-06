@@ -72,47 +72,57 @@ const RATE_LIMIT_PERIOD_SECONDS = 60
 // Worker entrypoint
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    const url = new URL(req.url)
-    const host = url.hostname
-    const isUpgrade = req.headers.get('Upgrade') === 'websocket'
+    try {
+      const url = new URL(req.url)
+      const host = url.hostname
+      const isUpgrade = req.headers.get('Upgrade') === 'websocket'
 
-    const rateLimitKey = getRateLimitKey(req)
-    const rateLimitOutcome = await env.TUNNEL_RATE_LIMITER.limit({
-      key: rateLimitKey,
-    })
-    if (!rateLimitOutcome.success) {
-      return new Response('Too Many Requests', {
-        status: 429,
-        headers: {
-          'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS),
-        },
+      const rateLimitKey = getRateLimitKey(req)
+      const rateLimitOutcome = await env.TUNNEL_RATE_LIMITER.limit({
+        key: rateLimitKey,
+      })
+      if (!rateLimitOutcome.success) {
+        return new Response('Too Many Requests', {
+          status: 429,
+          headers: {
+            'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS),
+          },
+        })
+      }
+
+      console.log(
+        `[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`,
+      )
+
+      // Extract tunnel ID from subdomain: {tunnelId}-tunnel.kimaki.xyz
+      const tunnelId = extractTunnelId(host)
+      if (!tunnelId) {
+        console.log(`[Worker] Invalid tunnel URL: ${host}`)
+        return new Response('Invalid tunnel URL', { status: 400 })
+      }
+
+      console.log(`[Worker] tunnelId=${tunnelId}`)
+
+      // Get the Durable Object for this tunnel
+      const doId = env.TUNNEL_DO.idFromName(tunnelId)
+      const stub = env.TUNNEL_DO.get(doId)
+
+      // Forward request to DO
+      const doUrl = new URL(req.url)
+      doUrl.searchParams.set('_tunnelId', tunnelId)
+      const res = await stub.fetch(new Request(doUrl.toString(), req))
+
+      console.log(`[Worker] DO response status=${res.status}`)
+      return res
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      console.error(`[Worker] Unhandled error: ${error.message}`)
+      console.error(`[Worker] Stack: ${error.stack}`)
+      return new Response(`Worker error: ${error.message}\n${error.stack}`, {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
       })
     }
-
-    console.log(
-      `[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`,
-    )
-
-    // Extract tunnel ID from subdomain: {tunnelId}-tunnel.kimaki.xyz
-    const tunnelId = extractTunnelId(host)
-    if (!tunnelId) {
-      console.log(`[Worker] Invalid tunnel URL: ${host}`)
-      return new Response('Invalid tunnel URL', { status: 400 })
-    }
-
-    console.log(`[Worker] tunnelId=${tunnelId}`)
-
-    // Get the Durable Object for this tunnel
-    const doId = env.TUNNEL_DO.idFromName(tunnelId)
-    const stub = env.TUNNEL_DO.get(doId)
-
-    // Forward request to DO
-    const doUrl = new URL(req.url)
-    doUrl.searchParams.set('_tunnelId', tunnelId)
-    const res = await stub.fetch(new Request(doUrl.toString(), req))
-
-    console.log(`[Worker] DO response status=${res.status}`)
-    return res
   },
 }
 
@@ -149,6 +159,20 @@ export class Tunnel {
   }
 
   async fetch(req: Request): Promise<Response> {
+    try {
+      return await this._fetch(req)
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      console.error(`[DO] Unhandled error in fetch: ${error.message}`)
+      console.error(`[DO] Stack: ${error.stack}`)
+      return new Response(`DO error: ${error.message}\n${error.stack}`, {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      })
+    }
+  }
+
+  private async _fetch(req: Request): Promise<Response> {
     const url = new URL(req.url)
     const tunnelId = url.searchParams.get('_tunnelId') || 'default'
     const isUpgrade = req.headers.get('Upgrade') === 'websocket'
@@ -636,11 +660,13 @@ export class Tunnel {
     _wasClean: boolean,
   ) {
     const attachment = ws.deserializeAttachment() as Attachment | undefined
+    console.log(`[DO] webSocketClose code=${code} reason=${reason} role=${attachment?.role} tunnelId=${attachment?.tunnelId}`)
     if (!attachment) {
       return
     }
 
     if (attachment.role === 'upstream') {
+      console.log(`[DO] Upstream disconnected, pending HTTP requests: ${this.pendingHttpRequests.size}, streaming: ${this.streamingHttpRequests.size}`)
       // Upstream disconnected - notify all downstream connections
       const downstreams = this.ctx.getWebSockets(
         `downstream:${attachment.tunnelId}`,
@@ -700,6 +726,7 @@ export class Tunnel {
   }
 
   async webSocketError(ws: WebSocket, error: unknown) {
+    console.error(`[DO] webSocketError: ${error instanceof Error ? error.message : String(error)}`)
     // Treat errors same as close
     await this.webSocketClose(ws, 1011, 'WebSocket error', false)
   }
