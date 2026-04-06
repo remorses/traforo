@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.4
+
+1. **Fixed stale tunnel detection for privileged processes** — `isLockfileStale` previously treated any signal error as "dead", including `EPERM` (process exists but you can't signal it). Only `ESRCH` (no such process) is now considered stale, so tunnels running as a different user or alongside system processes are no longer incorrectly reported as dead.
+
+2. **Fixed: `--kill` no longer erases tunnel info when the kill fails** — the lockfile (which stores the tunnel URL and ID) is now only deleted after the port is confirmed free. Previously it was deleted before the check, losing the tunnel metadata if the kill attempt failed due to permissions or a slow process.
+
+3. **`TRAFORO_HOME` env var overrides the lockfile directory** — by default lockfiles go to `~/.traforo/`. Set `TRAFORO_HOME` to redirect them elsewhere, useful for CI or sandboxed environments.
+
+4. **Shell-safe suggested commands in error messages** — the `--kill` command hint printed in conflict errors now correctly quotes arguments containing spaces or special characters.
+
 ## 0.2.3
 
 1. **Port conflict detection before starting the dev server** — when running `traforo -p PORT -- command`, if the port is already occupied the CLI now exits with a clear error instead of silently connecting the tunnel to the wrong process:
