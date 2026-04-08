@@ -68,6 +68,7 @@ function createTestServer(port: number): Promise<{
             JSON.stringify({
               method: req.method,
               path: url.pathname,
+              search: url.search,
               query: Object.fromEntries(url.searchParams),
               headers,
               body: body.length > 0 ? body.toString() : null,
@@ -420,12 +421,31 @@ describe('Traforo Tunnel Integration', () => {
         const data = (await res.json()) as {
           method: string
           path: string
+          search: string
           query: Record<string, string>
         }
         expect(data.method).toBe('GET')
         expect(data.path).toBe('/echo')
+        expect(data.search).toBe('?foo=bar&baz=123')
         expect(data.query.foo).toBe('bar')
         expect(data.query.baz).toBe('123')
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'preserves bare query flags used by Vite asset imports',
+      async () => {
+        const res = await fetch(`${tunnelUrl}/echo?import&url&inline`)
+        expect(res.status).toBe(200)
+
+        const data = (await res.json()) as {
+          path: string
+          search: string
+        }
+
+        expect(data.path).toBe('/echo')
+        expect(data.search).toBe('?import&url&inline')
       },
       TEST_TIMEOUT,
     )

@@ -76,6 +76,40 @@ const HTTP_TIMEOUT_MS = 30_000
 const WS_OPEN_TIMEOUT_MS = 10_000
 const RATE_LIMIT_PERIOD_SECONDS = 60
 
+export function appendQueryParamPreservingFormatting(
+  url: string,
+  key: string,
+  value: string,
+): string {
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+}
+
+export function removeQueryParamPreservingFormatting(
+  url: string,
+  key: string,
+): string {
+  const queryIndex = url.indexOf('?')
+  if (queryIndex === -1) {
+    return url
+  }
+
+  const hashIndex = url.indexOf('#', queryIndex)
+  const base = url.slice(0, queryIndex)
+  const hash = hashIndex === -1 ? '' : url.slice(hashIndex)
+  const query = url.slice(queryIndex + 1, hashIndex === -1 ? undefined : hashIndex)
+  const filteredParams = query.split('&').filter((param) => {
+    const paramName = param.split('=', 1)[0] || ''
+    return paramName !== key && decodeURIComponent(paramName) !== key
+  })
+
+  if (filteredParams.length === 0) {
+    return `${base}${hash}`
+  }
+
+  return `${base}?${filteredParams.join('&')}${hash}`
+}
+
 // Worker entrypoint
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -115,9 +149,12 @@ export default {
       const stub = env.TUNNEL_DO.get(doId)
 
       // Forward request to DO
-      const doUrl = new URL(req.url)
-      doUrl.searchParams.set('_tunnelId', tunnelId)
-      const res = await stub.fetch(new Request(doUrl.toString(), req))
+      const doUrl = appendQueryParamPreservingFormatting(
+        req.url,
+        '_tunnelId',
+        tunnelId,
+      )
+      const res = await stub.fetch(new Request(doUrl, req))
 
       console.log(`[Worker] DO response status=${res.status}`)
       return res
@@ -224,9 +261,11 @@ export class Tunnel {
           return new Response(null, { status: 101, webSocket: client })
         }
       }
-      // Include query params (minus _tunnelId) so tokens like ?token=xxx are forwarded
-      url.searchParams.delete('_tunnelId')
-      const wsPath = url.pathname + url.search
+      // Preserve raw query formatting for bare flags like ?import&url&inline.
+      const wsUrl = new URL(
+        removeQueryParamPreservingFormatting(req.url, '_tunnelId'),
+      )
+      const wsPath = wsUrl.pathname + wsUrl.search
       console.log(
         `[DO] Handling user WS connection for ${tunnelId} path=${wsPath}`,
       )
@@ -498,9 +537,7 @@ export class Tunnel {
     tunnelId: string,
     req: Request,
   ): Promise<Response> {
-    const url = new URL(req.url)
-    // Strip internal _tunnelId param so it doesn't leak to the local server
-    url.searchParams.delete('_tunnelId')
+    const url = new URL(removeQueryParamPreservingFormatting(req.url, '_tunnelId'))
 
     // Capture immutable cache context at request time to avoid race conditions
     // if the upstream reconnects with a different --cache key mid-flight.
