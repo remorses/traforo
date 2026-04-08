@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.5
+
+1. **Fixed "Network connection lost" errors during client reconnects** — the Durable Object now always uses the newest upstream WebSocket when an old one is still closing during a reconnect. Previously it picked the first socket returned by `getWebSockets()`, which could be a stale dying connection, causing in-flight requests to fail with a spurious disconnect.
+
+2. **Restart tunnel while preserving the URL** — the port-conflict error message now shows the exact command to restart while keeping the same tunnel ID, so existing consumers don't need to update their URLs:
+
+   ```
+   If you want to restart it without changing the tunnel URL for existing consumers, run:
+     traforo -p 3000 -t abc123-3000 --kill -- pnpm dev
+   ```
+
+3. **Better production debugging** — unhandled errors in the Worker and Durable Object now return the error message and stack trace in the 500 response body and log close codes, roles, and pending request counts. Previously Cloudflare returned an opaque empty 500 with no stack in `wrangler tail`.
+
 ## 0.2.4
 
 1. **Fixed stale tunnel detection for privileged processes** — `isLockfileStale` previously treated any signal error as "dead", including `EPERM` (process exists but you can't signal it). Only `ESRCH` (no such process) is now considered stale, so tunnels running as a different user or alongside system processes are no longer incorrectly reported as dead.
