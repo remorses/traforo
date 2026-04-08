@@ -29,6 +29,7 @@ function shellQuote(args: string[]): string {
     })
     .join(' ')
 }
+
 const DEFAULT_TUNNEL_ID_BYTES = 10
 
 export function createRandomTunnelId({ port }: { port: number }): string {
@@ -247,6 +248,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
       if (lock && !isLockfileStale(lock)) {
         const currentCwd = process.cwd()
         const currentCmd = options.command
+        const restartCommand = `${CLI_NAME} -p ${port} -t ${lock.tunnelId} --kill -- ${shellQuote(currentCmd)}`
         const sameCwd = lock.cwd === currentCwd
         const sameCmd =
           lock.command &&
@@ -266,6 +268,10 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
             `The same command in the same directory is already tunneled.`,
           )
           console.error(`Reuse the tunnel URL above instead of creating a new one.`)
+          console.error(
+            `If you want to restart it without changing the tunnel URL for existing consumers, run:`,
+          )
+          console.error(`  ${restartCommand}`)
           process.exit(1)
         } else {
           // Different command or directory — suggest --kill or reuse
@@ -277,10 +283,10 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
           console.error(`  PID:     ${lock.tunnelPid}`)
           console.error(`  Started: ${lock.startedAt}\n`)
           console.error(
-            `Use --kill to terminate the existing process and start fresh,`,
+            `Use --kill to terminate the existing process and start fresh while keeping the same tunnel URL,`,
           )
           console.error(`or just reuse the tunnel URL above instead:\n`)
-          console.error(`  traforo -p ${port} --kill -- ${shellQuote(options.command)}`)
+          console.error(`  ${restartCommand}`)
           process.exit(1)
         }
       } else {

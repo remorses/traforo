@@ -1,6 +1,9 @@
 import { describe, expect, test, afterEach, beforeAll, afterAll } from 'vitest'
+import { execFile } from 'node:child_process'
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { createRandomTunnelId, parseCommandFromArgv } from './run-tunnel.js'
 import {
   writeLockfile,
@@ -10,6 +13,41 @@ import {
   getLockfileDir,
   type LockfileData,
 } from './lockfile.js'
+
+const execFilePromise = promisify(execFile)
+
+async function listenOnRandomPort(): Promise<{ server: net.Server; port: number }> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        reject(new Error('Expected TCP server address'))
+        return
+      }
+      resolve({ server, port: address.port })
+    })
+  })
+}
+
+async function closeServer(server: net.Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve()
+    })
+  })
+}
+
+function getTsxPath(): string {
+  return path.resolve(
+    process.platform === 'win32' ? 'node_modules/.bin/tsx.cmd' : 'node_modules/.bin/tsx',
+  )
+}
 
 describe('run-tunnel security defaults', () => {
   test('generates a non-guessable default tunnel id with port suffix', () => {
@@ -120,5 +158,47 @@ describe('lockfile', () => {
     writeLockfile(TEST_PORT, sampleLock)
     // File should exist inside testDir, not ~/.traforo
     expect(fs.existsSync(path.join(testDir, `${TEST_PORT}.json`))).toBe(true)
+  })
+
+  test('occupied port guidance includes a restart command that preserves the tunnel id', async () => {
+    const { server, port } = await listenOnRandomPort()
+    const tunnelId = `existing-${port}`
+
+    try {
+      writeLockfile(port, {
+        ...sampleLock,
+        port,
+        tunnelId,
+        tunnelUrl: `https://${tunnelId}-tunnel.traforo.dev`,
+        tunnelPid: process.pid,
+        cwd: process.cwd(),
+        startedAt: '2026-04-08T00:00:00.000Z',
+      })
+
+      const stderr = await execFilePromise(getTsxPath(), ['src/cli.ts', '-p', String(port), '--', 'pnpm', 'dev'], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          TRAFORO_HOME: testDir,
+        },
+      })
+        .then(() => {
+          throw new Error('Expected CLI to exit with a port conflict')
+        })
+        .catch((error: Error & { stderr?: string }) => {
+          return error.stderr ?? ''
+        })
+
+      expect(stderr).toContain('The same command in the same directory is already tunneled.')
+      expect(stderr).toContain(
+        'If you want to restart it without changing the tunnel URL for existing consumers, run:',
+      )
+      expect(stderr).toContain(
+        `traforo -p ${port} -t ${tunnelId} --kill -- pnpm dev`,
+      )
+    } finally {
+      removeLockfile(port)
+      await closeServer(server)
+    }
   })
 })
