@@ -3,6 +3,11 @@ import {
   evaluateCloudflareCacheability,
   getRequestCacheBypassReason,
 } from './cache-policy.js'
+import {
+  getActiveUpstream,
+  isStaleUpstream,
+  sendUpstreamMessage,
+} from './upstream-state.js'
 import type {
   UpstreamMessage,
   DownstreamMessage,
@@ -30,6 +35,8 @@ export type Env = {
 type Attachment = {
   role: 'upstream' | 'downstream'
   tunnelId: string
+  /** Newer upstream sockets win if an older one lingers during disconnect races. */
+  connectedAt?: number
   /** Password stored on upstream attachment, survives DO hibernation */
   password?: string
   /** Edge cache partition key, survives DO hibernation */
@@ -358,11 +365,13 @@ export class Tunnel {
 
     const pair = new WebSocketPair()
     const [client, server] = Object.values(pair)
+    const connectedAt = Date.now()
 
     this.ctx.acceptWebSocket(server, [`upstream:${tunnelId}`])
     server.serializeAttachment({
       role: 'upstream',
       tunnelId,
+      connectedAt,
       ...(this.password && { password: this.password }),
       ...(this.cacheKey && { cacheKey: this.cacheKey }),
     } satisfies Attachment)
@@ -379,8 +388,67 @@ export class Tunnel {
   }
 
   private getUpstream(tunnelId: string): WebSocket | null {
-    const sockets = this.ctx.getWebSockets(`upstream:${tunnelId}`)
-    return sockets[0] || null
+    return getActiveUpstream(this.ctx.getWebSockets(`upstream:${tunnelId}`), tunnelId)
+  }
+
+  private isStaleUpstreamSocket(tunnelId: string, ws: WebSocket): boolean {
+    return isStaleUpstream(this.ctx.getWebSockets(`upstream:${tunnelId}`), tunnelId, ws)
+  }
+
+  private handleUpstreamDisconnected(tunnelId: string) {
+    console.log(
+      `[DO] Upstream disconnected, pending HTTP requests: ${this.pendingHttpRequests.size}, streaming: ${this.streamingHttpRequests.size}`,
+    )
+
+    const downstreams = this.ctx.getWebSockets(`downstream:${tunnelId}`)
+    for (const down of downstreams) {
+      try {
+        down.send(JSON.stringify({ event: 'upstream_disconnected' }))
+        down.close(1012, 'Upstream disconnected')
+      } catch {}
+    }
+
+    for (const [, pending] of this.pendingHttpRequests) {
+      clearTimeout(pending.timeout)
+      pending.resolve(new Response('Tunnel disconnected', { status: 502 }))
+    }
+    this.pendingHttpRequests.clear()
+
+    for (const [, streaming] of this.streamingHttpRequests) {
+      clearTimeout(streaming.timeout)
+      try {
+        streaming.writer.close()
+      } catch {}
+    }
+    this.streamingHttpRequests.clear()
+
+    for (const [connId, pending] of this.pendingWsConnections) {
+      clearTimeout(pending.timeout)
+      try {
+        pending.userWs.close(4011, 'Tunnel disconnected')
+      } catch {}
+    }
+    this.pendingWsConnections.clear()
+  }
+
+  private sendToUpstream(
+    tunnelId: string,
+    upstream: WebSocket,
+    message: UpstreamMessage,
+    context: string,
+  ): boolean {
+    return sendUpstreamMessage({
+      tunnelId,
+      sockets: this.ctx.getWebSockets(`upstream:${tunnelId}`),
+      upstream,
+      message,
+      context,
+      logError: console.error,
+      logInfo: console.log,
+      onDisconnect: () => {
+        this.handleUpstreamDisconnected(tunnelId)
+      },
+    })
   }
 
   /**
@@ -513,10 +581,7 @@ export class Tunnel {
       body,
     }
 
-    try {
-      upstream.send(JSON.stringify(message) satisfies string)
-    } catch (err) {
-      console.error(`[DO] upstream.send() failed for ${tunnelId} reqId=${reqId}:`, err)
+    if (!this.sendToUpstream(tunnelId, upstream, message, `${tunnelId} reqId=${reqId}`)) {
       return new Response('Failed to send to tunnel', { status: 502 })
     }
 
@@ -596,10 +661,7 @@ export class Tunnel {
       headers,
     }
 
-    try {
-      upstream.send(JSON.stringify(message) satisfies string)
-    } catch (err) {
-      console.error(`[DO] upstream.send() failed for WS ${connId}:`, err)
+    if (!this.sendToUpstream(tunnelId, upstream, message, `WS ${connId}`)) {
       server.close(4009, 'Failed to contact tunnel')
       return new Response(null, {
         status: 101,
@@ -660,48 +722,20 @@ export class Tunnel {
     _wasClean: boolean,
   ) {
     const attachment = ws.deserializeAttachment() as Attachment | undefined
-    console.log(`[DO] webSocketClose code=${code} reason=${reason} role=${attachment?.role} tunnelId=${attachment?.tunnelId}`)
+    console.log(
+      `[DO] webSocketClose code=${code} reason=${reason} role=${attachment?.role} tunnelId=${attachment?.tunnelId}`,
+    )
     if (!attachment) {
       return
     }
 
     if (attachment.role === 'upstream') {
-      console.log(`[DO] Upstream disconnected, pending HTTP requests: ${this.pendingHttpRequests.size}, streaming: ${this.streamingHttpRequests.size}`)
-      // Upstream disconnected - notify all downstream connections
-      const downstreams = this.ctx.getWebSockets(
-        `downstream:${attachment.tunnelId}`,
-      )
-      for (const down of downstreams) {
-        try {
-          down.send(JSON.stringify({ event: 'upstream_disconnected' }))
-          down.close(1012, 'Upstream disconnected')
-        } catch {}
+      if (this.isStaleUpstreamSocket(attachment.tunnelId, ws)) {
+        console.log(`[DO] Ignoring stale upstream close for ${attachment.tunnelId}`)
+        return
       }
 
-      // Reject all pending HTTP requests
-      for (const [, pending] of this.pendingHttpRequests) {
-        clearTimeout(pending.timeout)
-        pending.resolve(new Response('Tunnel disconnected', { status: 502 }))
-      }
-      this.pendingHttpRequests.clear()
-
-      // Close all streaming HTTP requests
-      for (const [, streaming] of this.streamingHttpRequests) {
-        clearTimeout(streaming.timeout)
-        try {
-          streaming.writer.close()
-        } catch {}
-      }
-      this.streamingHttpRequests.clear()
-
-      // Close all pending WS connections
-      for (const [connId, pending] of this.pendingWsConnections) {
-        clearTimeout(pending.timeout)
-        try {
-          pending.userWs.close(4011, 'Tunnel disconnected')
-        } catch {}
-      }
-      this.pendingWsConnections.clear()
+      this.handleUpstreamDisconnected(attachment.tunnelId)
     } else if (attachment.role === 'downstream') {
       // Downstream (user) WS closed — forward close to upstream so the
       // local client can clean up its corresponding localWsConnections entry
@@ -717,9 +751,12 @@ export class Tunnel {
             code,
             reason,
           }
-          try {
-            upstream.send(JSON.stringify(closeMsg))
-          } catch {}
+          this.sendToUpstream(
+            attachment.tunnelId,
+            upstream,
+            closeMsg,
+            `WS close ${connId}`,
+          )
         }
       }
     }
@@ -802,9 +839,7 @@ export class Tunnel {
       binary,
     }
 
-    try {
-      upstream.send(JSON.stringify(message) satisfies string)
-    } catch {}
+    this.sendToUpstream(tunnelId, upstream, message, `WS frame ${connId}`)
   }
 
   private handleHttpResponse(msg: HttpResponseMessage) {
