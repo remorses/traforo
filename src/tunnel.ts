@@ -135,7 +135,7 @@ export default {
         `[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`,
       )
 
-      // Extract tunnel ID from subdomain: {tunnelId}-tunnel.kimaki.xyz
+      // Extract tunnel ID from subdomain: {tunnelId}-tunnel.kimaki.dev
       const tunnelId = extractTunnelId(host)
       if (!tunnelId) {
         console.log(`[Worker] Invalid tunnel URL: ${host}`)
@@ -171,7 +171,7 @@ export default {
 }
 
 function extractTunnelId(host: string): string | null {
-  // Match: {tunnelId}-tunnel.kimaki.xyz, {tunnelId}-tunnel-preview.kimaki.xyz, or {tunnelId}-tunnel.localhost
+  // Match: {tunnelId}-tunnel.kimaki.dev, {tunnelId}-tunnel-preview.kimaki.dev, or {tunnelId}-tunnel.localhost
   const match = host.match(/^([a-z0-9-]+)-tunnel(?:-preview)?\./)
   if (!match) {
     return null

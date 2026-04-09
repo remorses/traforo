@@ -27,7 +27,7 @@ type TunnelClientOptions = {
   localPort: number
   /** Local host (default: localhost) */
   localHost?: string
-  /** Base domain for tunnel URLs (default: kimaki.xyz) */
+  /** Base domain for tunnel URLs (default: kimaki.dev) */
   baseDomain?: string
   /** Tunnel server URL (default: wss://{tunnelId}-tunnel.{baseDomain}) */
   serverUrl?: string

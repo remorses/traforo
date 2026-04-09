@@ -32,6 +32,10 @@
       "zone_name": "traforo.dev"
     },
     {
+      "pattern": "*-tunnel.kimaki.dev/*",
+      "zone_name": "kimaki.dev"
+    },
+    {
       "pattern": "*-tunnel.kimaki.xyz/*",
       "zone_name": "kimaki.xyz"
     }
@@ -60,6 +64,10 @@
         {
           "pattern": "*-tunnel-preview.traforo.dev/*",
           "zone_name": "traforo.dev"
+        },
+        {
+          "pattern": "*-tunnel-preview.kimaki.dev/*",
+          "zone_name": "kimaki.dev"
         },
         {
           "pattern": "*-tunnel-preview.kimaki.xyz/*",
