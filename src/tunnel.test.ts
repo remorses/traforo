@@ -6,7 +6,7 @@
  * WebSocket, and SSE requests work through the tunnel.
  *
  * Run: pnpm test
- * Note: Requires preview deployment to be active (pnpm deploy:preview)
+ * Note: Requires preview deployment to be active (pnpm deploy)
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'

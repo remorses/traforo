@@ -55,7 +55,7 @@
           "name": "TUNNEL_RATE_LIMITER",
           "namespace_id": "42304",
           "simple": {
-            "limit": 1000,
+            "limit": 10000,
             "period": 60
           }
         }
