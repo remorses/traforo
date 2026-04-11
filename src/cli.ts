@@ -36,9 +36,9 @@ cli
   .action(
     async (options: {
       port?: string
-      tunnelId?: string
-      host?: string
-      server?: string
+      tunnelId?: string | boolean
+      host?: string | boolean
+      server?: string | boolean
       cache?: string | boolean
       password?: string
       kill?: boolean
@@ -62,11 +62,15 @@ cli
           : 'default'
         : undefined
 
+      // Optional-value flags ([value]) can be boolean true when used bare; coerce to string | undefined
+      const asOptionalString = (v: string | boolean | undefined) =>
+        typeof v === 'string' ? v : undefined
+
       await runTunnel({
         port,
-        tunnelId: options.tunnelId,
-        localHost: options.host,
-        serverUrl: options.server,
+        tunnelId: asOptionalString(options.tunnelId),
+        localHost: asOptionalString(options.host),
+        serverUrl: asOptionalString(options.server),
         command: command.length > 0 ? command : undefined,
         cacheKey,
         password: options.password,
