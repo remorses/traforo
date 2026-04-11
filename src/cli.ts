@@ -33,51 +33,33 @@ cli
   .example(`${CLI_NAME} -p 5173 -t my-app -- vite`)
   .example(`${CLI_NAME} -p 3000 --cache`)
   .example(`${CLI_NAME} -p 3000 --cache v2`)
-  .action(
-    async (options: {
-      port?: string
-      tunnelId?: string | boolean
-      host?: string | boolean
-      server?: string | boolean
-      cache?: string | boolean
-      password?: string
-      kill?: boolean
-    }) => {
-      if (!options.port) {
-        console.error('Error: --port is required')
-        console.error(`\nUsage: ${CLI_NAME} -p <port> [-- command]`)
-        process.exit(1)
-      }
+  .action(async (options) => {
+    if (!options.port) {
+      console.error('Error: --port is required')
+      console.error(`\nUsage: ${CLI_NAME} -p <port> [-- command]`)
+      process.exit(1)
+    }
 
-      const port = parseInt(options.port, 10)
-      if (isNaN(port) || port < 1 || port > 65535) {
-        console.error(`Error: Invalid port number: ${options.port}`)
-        process.exit(1)
-      }
+    const port = parseInt(options.port, 10)
+    if (isNaN(port) || port < 1 || port > 65535) {
+      console.error(`Error: Invalid port number: ${options.port}`)
+      process.exit(1)
+    }
 
-      // --cache with no value comes as boolean true, --cache v2 comes as string "v2"
-      const cacheKey = options.cache
-        ? typeof options.cache === 'string'
-          ? options.cache
-          : 'default'
-        : undefined
+    // --cache bare (`''`) → 'default', --cache v2 → 'v2', omitted → undefined
+    const cacheKey = options.cache === '' ? 'default' : options.cache || undefined
 
-      // Optional-value flags ([value]) can be boolean true when used bare; coerce to string | undefined
-      const asOptionalString = (v: string | boolean | undefined) =>
-        typeof v === 'string' ? v : undefined
-
-      await runTunnel({
-        port,
-        tunnelId: asOptionalString(options.tunnelId),
-        localHost: asOptionalString(options.host),
-        serverUrl: asOptionalString(options.server),
-        command: command.length > 0 ? command : undefined,
-        cacheKey,
-        password: options.password,
-        kill: options.kill,
-      })
-    },
-  )
+    await runTunnel({
+      port,
+      tunnelId: options.tunnelId || undefined,
+      localHost: options.host || undefined,
+      serverUrl: options.server || undefined,
+      command: command.length > 0 ? command : undefined,
+      cacheKey,
+      password: options.password,
+      kill: options.kill,
+    })
+  })
 
 cli.help()
 cli.version('0.0.1')
