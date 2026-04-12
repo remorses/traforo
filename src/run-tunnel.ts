@@ -283,9 +283,8 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
           console.error(`  PID:     ${lock.tunnelPid}`)
           console.error(`  Started: ${lock.startedAt}\n`)
           console.error(
-            `Use --kill to terminate the existing process and start fresh while keeping the same tunnel URL,`,
+            `Use --kill to terminate the existing process and reuse the tunnel URL:`,
           )
-          console.error(`or just reuse the tunnel URL above instead:\n`)
           console.error(`  ${restartCommand}`)
           process.exit(1)
         }
