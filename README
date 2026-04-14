@@ -14,15 +14,21 @@ Expose a local server:
 
     traforo -p 3000
 
+Or let traforo auto-detect the port from a dev server command:
+
+    traforo -- pnpm dev
+    traforo -- next start
+
 With a custom tunnel ID (only for services safe to expose publicly):
 
     traforo -p 3000 -t my-app
 
 Run a command and tunnel it:
 
-    traforo -p 3000 -- next start
-    traforo -p 3000 -- pnpm dev
+    traforo -- next start
+    traforo -- pnpm dev
     traforo -p 5173 -- vite
+    traforo -p 3000 -- next start    # explicit port overrides auto-detection
 
 The tunnel URL will be:
 
@@ -30,7 +36,7 @@ The tunnel URL will be:
 
 ## OPTIONS
 
-    -p, --port <port>          Local port to expose (required)
+    -p, --port <port>          Local port to expose (optional with -- command)
     -t, --tunnel-id [id]       Custom tunnel ID (prefer random default)
     -c, --cache [key]          Enable edge caching (optional partition key)
     --password <password>      Protect the tunnel with a password
@@ -38,6 +44,20 @@ The tunnel URL will be:
     -s, --server [url]         Custom tunnel server URL
     --help                     Show help
     --version                  Show version
+
+## AUTO PORT DETECTION
+
+When you pass a command after `--`, traforo can detect the local port from the
+process output. It watches stdout and stderr for addresses like these:
+
+    http://localhost:3000
+    localhost:5173
+    127.0.0.1:8080
+    0.0.0.0:4321
+
+This works well with common dev servers that print their local URL when they start.
+
+If you also pass `-p`, traforo uses that explicit port instead of auto-detecting.
 
 ## EDGE CACHING
 

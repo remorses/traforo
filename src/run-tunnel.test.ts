@@ -4,7 +4,11 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { createRandomTunnelId, parseCommandFromArgv } from './run-tunnel.js'
+import {
+  createRandomTunnelId,
+  detectPortFromText,
+  parseCommandFromArgv,
+} from './run-tunnel.js'
 import {
   writeLockfile,
   readLockfile,
@@ -63,6 +67,19 @@ describe('run-tunnel security defaults', () => {
     }
   })
 
+  test('generates a non-guessable default tunnel id without port suffix when port is omitted', () => {
+    const ids = new Set(
+      Array.from({ length: 32 }, () => {
+        return createRandomTunnelId()
+      }),
+    )
+
+    expect(ids.size).toBe(32)
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9a-f]{20}$/)
+    }
+  })
+
   test('parses commands after dash dash without touching leading args', () => {
     const parsed = parseCommandFromArgv([
       'node',
@@ -78,6 +95,17 @@ describe('run-tunnel security defaults', () => {
       command: ['pnpm', 'dev'],
       argv: ['node', 'traforo', '-p', '3000'],
     })
+  })
+
+  test('detects a local port from common dev server output', () => {
+    expect(detectPortFromText('Local: http://localhost:5173/')).toBe(5173)
+    expect(detectPortFromText('ready on http://127.0.0.1:3000')).toBe(3000)
+    expect(detectPortFromText('Server running at 0.0.0.0:4321')).toBe(4321)
+  })
+
+  test('ignores invalid or unrelated port-like output', () => {
+    expect(detectPortFromText('listening on localhost:70000')).toBeNull()
+    expect(detectPortFromText('some random log line')).toBeNull()
   })
 })
 

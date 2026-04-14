@@ -32,12 +32,16 @@ function shellQuote(args: string[]): string {
 
 const DEFAULT_TUNNEL_ID_BYTES = 10
 
-export function createRandomTunnelId({ port }: { port: number }): string {
-  return `${crypto.randomBytes(DEFAULT_TUNNEL_ID_BYTES).toString('hex')}-${port}`
+export function createRandomTunnelId({ port }: { port?: number } = {}): string {
+  const randomId = crypto.randomBytes(DEFAULT_TUNNEL_ID_BYTES).toString('hex')
+  if (!port) {
+    return randomId
+  }
+  return `${randomId}-${port}`
 }
 
 export type RunTunnelOptions = {
-  port: number
+  port?: number
   tunnelId?: string
   localHost?: string
   baseDomain?: string
@@ -49,6 +53,23 @@ export type RunTunnelOptions = {
   password?: string
   /** Kill any existing process on the port before starting */
   kill?: boolean
+}
+
+const LOCAL_PORT_PATTERNS = [
+  /(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d{1,5})/i,
+  /\blistening(?:\s+at|\s+on)?\s+(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d{1,5})/i,
+  /\bport\s+(\d{1,5})\b/i,
+]
+
+export function detectPortFromText(text: string): number | null {
+  for (const pattern of LOCAL_PORT_PATTERNS) {
+    const match = text.match(pattern)
+    const port = Number(match?.[1])
+    if (port >= 1 && port <= 65535) {
+      return port
+    }
+  }
+  return null
 }
 
 /**
@@ -86,6 +107,75 @@ async function waitForPort(
     }
 
     check()
+  })
+}
+
+async function detectPortFromProcessOutput(
+  child: ChildProcess,
+  timeoutMs = 60_000,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let outputBuffer = ''
+
+    const cleanup = () => {
+      clearTimeout(timeout)
+      child.off('exit', handleExit)
+      child.off('error', handleError)
+      child.stdout?.off('data', onStdout)
+      child.stderr?.off('data', onStderr)
+    }
+
+    const finish = (value: number) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+
+    const scanChunk = (chunk: Buffer | string) => {
+      outputBuffer += chunk.toString()
+      if (outputBuffer.length > 8_000) {
+        outputBuffer = outputBuffer.slice(-8_000)
+      }
+      const detectedPort = detectPortFromText(outputBuffer)
+      if (detectedPort) {
+        finish(detectedPort)
+      }
+    }
+
+    const handleExit = (code: number | null) => {
+      fail(new Error(`Command exited with code ${code} before a local port was detected`))
+    }
+
+    const handleError = (error: Error) => {
+      fail(error)
+    }
+
+    const onStdout = (chunk: Buffer | string) => {
+      scanChunk(chunk)
+    }
+
+    const onStderr = (chunk: Buffer | string) => {
+      scanChunk(chunk)
+    }
+
+    child.stdout?.on('data', onStdout)
+    child.stderr?.on('data', onStderr)
+
+    const timeout = setTimeout(() => {
+      fail(new Error('Timeout waiting for command output to reveal a local port'))
+    }, timeoutMs)
+
+    child.on('exit', handleExit)
+    child.on('error', handleError)
   })
 }
 
@@ -223,11 +313,21 @@ export function parseCommandFromArgv(argv: string[]): {
  */
 export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   const localHost = options.localHost || 'localhost'
-  const port = options.port
+  if (!options.port && !options.command?.length) {
+    console.error('Error: --port is required unless a command is provided after --')
+    process.exit(1)
+  }
+
+  if (options.kill && !options.port) {
+    console.error('Error: --kill requires --port')
+    process.exit(1)
+  }
+
+  let port = options.port
   const tunnelId = options.tunnelId || createRandomTunnelId({ port })
 
   // Kill existing process on port if requested
-  if (options.kill) {
+  if (options.kill && port) {
     await killProcessOnPort(port)
 
     // Verify the port actually freed up before removing the lockfile
@@ -241,7 +341,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   }
 
   // Pre-flight: detect port conflict before spawning the child process
-  if (options.command && options.command.length > 0 && !options.kill) {
+  if (port && options.command && options.command.length > 0 && !options.kill) {
     const portBusy = await isPortInUse(port, localHost)
     if (portBusy) {
       const lock = readLockfile(port)
@@ -307,13 +407,18 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     const args = options.command.slice(1)
 
     console.log(`Starting: ${shellQuote(options.command)}`)
-    console.log(`PORT=${port}\n`)
+    if (port) {
+      console.log(`PORT=${port}`)
+    } else {
+      console.log('Waiting for command output to reveal the local port...')
+    }
+    console.log('')
 
     const spawnedChild = spawn(cmd, args, {
-      stdio: 'inherit',
+      stdio: ['inherit', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        PORT: String(port),
+        ...(port ? { PORT: String(port) } : {}),
         // Disable clear/animations for common tools without lying about CI
         FORCE_COLOR: '1',
         VITE_CLS: 'false',
@@ -322,6 +427,9 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     })
     child = spawnedChild
 
+    spawnedChild.stdout?.pipe(process.stdout)
+    spawnedChild.stderr?.pipe(process.stderr)
+
     spawnedChild.on('error', (err) => {
       console.error(`Failed to start command: ${err.message}`)
       process.exit(1)
@@ -329,13 +437,23 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
 
     spawnedChild.on('exit', (code) => {
       console.log(`\nCommand exited with code ${code}`)
-      removeLockfile(port, process.pid)
+      if (port) {
+        removeLockfile(port, process.pid)
+      }
       process.exit(code || 0)
     })
 
-    // Wait for port to be available before connecting tunnel
-    console.log(`Waiting for port ${port}...`)
     try {
+      if (!port) {
+        port = await detectPortFromProcessOutput(spawnedChild)
+        console.log(`\nDetected local port ${port}`)
+      }
+
+      if (!port) {
+        throw new Error('Failed to determine local port')
+      }
+
+      console.log(`Waiting for port ${port}...`)
       await waitForPort(port, localHost)
       console.log(`Port ${port} is ready!\n`)
     } catch (err) {
@@ -343,6 +461,11 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
       spawnedChild.kill()
       process.exit(1)
     }
+  }
+
+  if (!port) {
+    console.error('Error: Failed to determine local port')
+    process.exit(1)
   }
 
   const client = new TunnelClient({

@@ -8,7 +8,7 @@ const cli = goke(CLI_NAME)
 
 cli
   .command('', 'Expose a local port via tunnel')
-  .option('-p, --port <port>', 'Local port to expose (required)')
+  .option('-p, --port <port>', 'Local port to expose (optional when using -- command)')
   .option(
     '-t, --tunnel-id [id]',
     'Custom tunnel ID (only for services safe to expose publicly; prefer random default)',
@@ -28,22 +28,31 @@ cli
     'Kill any existing process on the port before starting',
   )
   .example(`${CLI_NAME} -p 3000`)
+  .example(`${CLI_NAME} -- next start`)
+  .example(`${CLI_NAME} -- pnpm dev`)
   .example(`${CLI_NAME} -p 3000 -- next start`)
-  .example(`${CLI_NAME} -p 3000 -- pnpm dev`)
   .example(`${CLI_NAME} -p 5173 -t my-app -- vite`)
   .example(`${CLI_NAME} -p 3000 --cache`)
   .example(`${CLI_NAME} -p 3000 --cache v2`)
   .action(async (options) => {
-    if (!options.port) {
-      console.error('Error: --port is required')
-      console.error(`\nUsage: ${CLI_NAME} -p <port> [-- command]`)
+    if (!options.port && command.length === 0) {
+      console.error('Error: --port is required unless a command is provided after --')
+      console.error(`\nUsage: ${CLI_NAME} [-p <port>] [-- command]`)
       process.exit(1)
     }
 
-    const port = parseInt(options.port, 10)
-    if (isNaN(port) || port < 1 || port > 65535) {
-      console.error(`Error: Invalid port number: ${options.port}`)
+    if (options.kill && !options.port) {
+      console.error('Error: --kill requires --port')
       process.exit(1)
+    }
+
+    let port: number | undefined
+    if (options.port) {
+      port = parseInt(options.port, 10)
+      if (isNaN(port) || port < 1 || port > 65535) {
+        console.error(`Error: Invalid port number: ${options.port}`)
+        process.exit(1)
+      }
     }
 
     // --cache bare (`''`) → 'default', --cache v2 → 'v2', omitted → undefined
