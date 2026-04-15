@@ -111,6 +111,29 @@ instructions to pass the password as a cookie:
 WebSocket upgrade requests without the correct cookie are rejected with
 close code 4013.
 
+## TRAFORO_URL ENVIRONMENT VARIABLE
+
+When you run a command after `--`, traforo injects `TRAFORO_URL` into the
+child process environment with the full public tunnel URL:
+
+    TRAFORO_URL=https://{tunnel-id}-tunnel.traforo.dev
+
+Your app can read it directly:
+
+    const baseUrl = process.env.TRAFORO_URL
+
+To remap it to a custom env var your app already uses, prefix the command:
+
+    traforo -p 3000 -- sh -c 'APP_URL=$TRAFORO_URL exec node server.js'
+    traforo -p 3000 -- sh -c 'NEXT_PUBLIC_URL=$TRAFORO_URL exec next dev'
+    traforo -p 3000 -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec vite'
+
+Or set it in your .env / startup script and let traforo override only
+`TRAFORO_URL`, reading it where needed:
+
+    // next.config.js
+    const baseUrl = process.env.APP_URL || process.env.TRAFORO_URL || 'http://localhost:3000'
+
 ## HOW IT WORKS
 
 1. Local client connects to Cloudflare Durable Object via WebSocket

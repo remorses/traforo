@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.0
+
+1. **`TRAFORO_URL` env var injected into child processes** — your app now receives its own public tunnel URL automatically when launched via `traforo -- <command>`:
+
+   ```bash
+   traforo -- node server.js
+   # process.env.TRAFORO_URL → https://{id}-tunnel.traforo.dev
+   ```
+
+   Read it directly in your app:
+
+   ```ts
+   const baseUrl = process.env.TRAFORO_URL
+   ```
+
+   Remap to a custom env var your framework already uses with `sh -c`:
+
+   ```bash
+   traforo -p 3000 -- sh -c 'APP_URL=$TRAFORO_URL exec node server.js'
+   traforo -p 3000 -- sh -c 'NEXT_PUBLIC_URL=$TRAFORO_URL exec next dev'
+   traforo -p 3000 -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec vite'
+   ```
+
+   Or fall back to it in your config when no explicit URL is set:
+
+   ```ts
+   // next.config.js
+   const baseUrl = process.env.APP_URL || process.env.TRAFORO_URL || 'http://localhost:3000'
+   ```
+
 ## 0.3.0
 
 1. **`--port` is now optional when running a command** — traforo detects the local port automatically from the dev server's output, so you no longer need to know the port upfront:

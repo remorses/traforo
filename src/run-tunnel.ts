@@ -401,6 +401,10 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
 
   let child: ChildProcess | null = null
 
+  // Compute tunnel URL early so it can be injected into the child env
+  const baseDomain = options.baseDomain || 'traforo.dev'
+  const tunnelUrl = `https://${tunnelId}-tunnel.${baseDomain}`
+
   // If command provided, spawn child process with PORT env
   if (options.command && options.command.length > 0) {
     const cmd = options.command[0]!
@@ -419,6 +423,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
       env: {
         ...process.env,
         ...(port ? { PORT: String(port) } : {}),
+        TRAFORO_URL: tunnelUrl,
         // Disable clear/animations for common tools without lying about CI
         FORCE_COLOR: '1',
         VITE_CLS: 'false',
