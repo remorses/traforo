@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+1. **`--port` is now optional when running a command** — traforo detects the local port automatically from the dev server's output, so you no longer need to know the port upfront:
+
+   ```bash
+   traforo -- pnpm dev       # detects port from output
+   traforo -- next start
+   traforo -- vite
+   ```
+
+   It watches stdout and stderr for common address patterns (`localhost:PORT`, `127.0.0.1:PORT`, `0.0.0.0:PORT`) and connects the tunnel the moment the server announces it. Pass `-p` explicitly to override auto-detection.
+
+   Child process output is now always forwarded through a pipe so traforo can observe it, which also means the output is always flushed line-by-line regardless of whether `-p` is provided.
+
+2. **Fixed Vite asset imports failing through the tunnel** — `?import&url&inline` bare query flags were being rewritten to `?import=&url=&inline=` when traforo appended and removed its internal `_tunnelId` parameter via `URLSearchParams`. Vite serves the two forms differently (raw binary vs. JS module wrapper), causing dynamic imports and font loads to break. The query string is now preserved exactly as the client sent it.
+
 ## 0.2.5
 
 1. **Fixed "Network connection lost" errors during client reconnects** — the Durable Object now always uses the newest upstream WebSocket when an old one is still closing during a reconnect. Previously it picked the first socket returned by `getWebSockets()`, which could be a stale dying connection, causing in-flight requests to fail with a spurious disconnect.

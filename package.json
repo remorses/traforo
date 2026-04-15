@@ -1,6 +1,6 @@
 {
   "name": "traforo",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "description": "HTTP tunnel via Cloudflare Durable Objects and WebSockets. Edge caching and password protection.",
   "type": "module",
   "license": "MIT",
