@@ -44,6 +44,7 @@
     "@cloudflare/workers-types": "^4.20250712.0",
     "@types/http-cache-semantics": "^4.2.0",
     "@types/node": "^22.0.0",
+    "@types/proxy-from-env": "^1.0.4",
     "@types/ws": "^8.18.1",
     "tsx": "^4.20.5",
     "typescript": "^5.7.0",
@@ -55,6 +56,9 @@
   "dependencies": {
     "goke": "^6.8.0",
     "http-cache-semantics": "^4.2.0",
+    "https-proxy-agent": "^7.0.6",
+    "proxy-from-env": "^2.1.0",
+    "socks-proxy-agent": "^8.0.5",
     "string-dedent": "^3.0.2",
     "ws": "^8.19.0"
   }
