@@ -2,6 +2,9 @@
  * Local tunnel client - runs on user's machine to expose a local server.
  */
 
+import { HttpsProxyAgent } from 'https-proxy-agent'
+import { getProxyForUrl } from 'proxy-from-env'
+import { SocksProxyAgent } from 'socks-proxy-agent'
 import WebSocket from 'ws'
 import type {
   UpstreamMessage,
@@ -53,6 +56,34 @@ type TunnelClientOptions = {
  */
 const PING_INTERVAL_MS = 30_000
 
+export function createWebSocketAgentFromEnv({
+  wsUrl,
+}: {
+  wsUrl: string
+}): HttpsProxyAgent<string> | SocksProxyAgent | undefined {
+  const httpLikeUrl = (() => {
+    const parsedUrl = new URL(wsUrl)
+    if (parsedUrl.protocol === 'ws:') {
+      parsedUrl.protocol = 'http:'
+    }
+    if (parsedUrl.protocol === 'wss:') {
+      parsedUrl.protocol = 'https:'
+    }
+    return parsedUrl.toString()
+  })()
+
+  const proxyUrl = getProxyForUrl(wsUrl) || getProxyForUrl(httpLikeUrl)
+  if (!proxyUrl) {
+    return undefined
+  }
+
+  if (proxyUrl.startsWith('socks')) {
+    return new SocksProxyAgent(proxyUrl)
+  }
+
+  return new HttpsProxyAgent(proxyUrl)
+}
+
 export class TunnelClient {
   private options: Required<TunnelClientOptions>
   private ws: WebSocket | null = null
@@ -93,7 +124,9 @@ export class TunnelClient {
     // console.log(`Connecting to ${wsUrl}...`)
 
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(wsUrl)
+      this.ws = new WebSocket(wsUrl, {
+        agent: createWebSocketAgentFromEnv({ wsUrl }),
+      })
 
       this.ws.on('open', () => {
         console.log(`Connected with Traforo!\n${this.url}`)

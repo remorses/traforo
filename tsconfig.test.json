@@ -5,6 +5,7 @@
   },
   "include": [
     "src/client.ts",
+    "src/proxy-agents.d.ts",
     "src/types.ts",
     "src/run-tunnel.ts",
     "src/cli.ts",
