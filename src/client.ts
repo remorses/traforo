@@ -5,6 +5,7 @@
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { getProxyForUrl } from 'proxy-from-env'
 import { SocksProxyAgent } from 'socks-proxy-agent'
+import { isAgent } from 'std-env'
 import WebSocket from 'ws'
 import type {
   UpstreamMessage,
@@ -129,7 +130,14 @@ export class TunnelClient {
       })
 
       this.ws.on('open', () => {
-        console.log(`Connected with Traforo!\n${this.url}`)
+        const { localHost, localPort, localHttps } = this.options
+        const localProtocol = localHttps ? 'https' : 'http'
+        const localUrl = `${localProtocol}://${localHost}:${localPort}`
+        let message = `Connected with Traforo!\n${this.url}`
+        if (isAgent) {
+          message += `\n\nUse ${localUrl} directly for lower latency. The tunnel URL is for remote access. Show both URLs to the user.`
+        }
+        console.log(message)
         this.startPingInterval()
         resolve()
       })

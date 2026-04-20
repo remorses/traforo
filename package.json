@@ -59,6 +59,7 @@
     "https-proxy-agent": "^7.0.6",
     "proxy-from-env": "^2.1.0",
     "socks-proxy-agent": "^8.0.5",
+    "std-env": "^4.1.0",
     "string-dedent": "^3.0.2",
     "ws": "^8.19.0"
   }
