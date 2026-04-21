@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0
+
+1. **Proxy-aware WebSocket connections** — the tunnel client now automatically routes through HTTP, HTTPS, and SOCKS proxies based on standard environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`):
+
+   ```bash
+   # Route tunnel through a corporate proxy
+   HTTP_PROXY=http://proxy.corp.com:8080 traforo -p 3000
+
+   # SOCKS5 proxy
+   ALL_PROXY=socks5://127.0.0.1:1080 traforo -p 3000
+
+   # Exclude specific hosts
+   NO_PROXY=localhost,127.0.0.1 traforo -p 3000
+   ```
+
+   No configuration needed — it picks up proxy settings from your environment automatically.
+
+2. **Localhost URL hint for AI agents** — when traforo detects it's running inside an AI coding agent, it now shows both the tunnel URL and the local server URL so the agent can use localhost directly for faster responses:
+
+   ```
+   Connected with Traforo!
+   https://abc123-3000-tunnel.traforo.dev
+
+   Use http://localhost:3000 directly for lower latency.
+   The tunnel URL is for remote access. Show both URLs to the user.
+   ```
+
 ## 0.4.0
 
 1. **`TRAFORO_URL` env var injected into child processes** — your app now receives its own public tunnel URL automatically when launched via `traforo -- <command>`:
