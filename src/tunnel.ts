@@ -1437,15 +1437,15 @@ function offlineHtml(tunnelId: string): string {
             is interrupted.
           </p>
           <div class="section">
-            <div class="section-title">Keep it running with tmux</div>
+            <div class="section-title">Keep it running with tuistory</div>
             <pre><code><span class="comment"># Create a background session</span>
-    tmux new-session -d -s dev
+    bunx tuistory launch "kimaki tunnel --kill -p 3000 -- pnpm dev" -s dev
 
-    <span class="comment"># Start your dev server with tunnel</span>
-    tmux send-keys -t dev "npx kimaki tunnel --kill -p 3000 -- pnpm dev" Enter
+    <span class="comment"># Wait for the server or tunnel output</span>
+    bunx tuistory -s dev wait "/ready|tunnel|http/i" --timeout 30000
 
-    <span class="comment"># View the tunnel URL</span>
-    tmux capture-pane -t dev -p | grep tunnel</code></pre>
+    <span class="comment"># Read the tunnel URL</span>
+    bunx tuistory read -s dev</code></pre>
           </div>
         </div>
       </body>
