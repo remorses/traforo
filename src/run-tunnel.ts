@@ -424,6 +424,10 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
         ...process.env,
         ...(port ? { PORT: String(port) } : {}),
         TRAFORO_URL: tunnelUrl,
+        // Let wrangler dev pass parent env vars (including TRAFORO_URL) as
+        // worker bindings so process.env.TRAFORO_URL works inside workerd.
+        // Only effective when no .dev.vars file exists.
+        CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true',
         // Disable clear/animations for common tools without lying about CI
         FORCE_COLOR: '1',
         VITE_CLS: 'false',

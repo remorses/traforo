@@ -134,6 +134,40 @@ Or set it in your .env / startup script and let traforo override only
     // next.config.js
     const baseUrl = process.env.APP_URL || process.env.TRAFORO_URL || 'http://localhost:3000'
 
+## REVERSE PROXY HEADERS
+
+Traforo injects standard reverse-proxy headers when forwarding requests to
+your local server:
+
+    X-Forwarded-Host:  {tunnel-id}-tunnel.traforo.dev
+    X-Forwarded-Proto: https
+
+These headers are only added if not already present in the incoming request.
+Frameworks like **BetterAuth**, **Next.js**, **Express** (with trust-proxy),
+and **Hono** use these to construct correct redirect URLs and absolute links
+instead of pointing back to localhost.
+
+No configuration needed. If your framework reads `X-Forwarded-Host` or
+`X-Forwarded-Proto`, redirects and OAuth callbacks will use the public
+tunnel URL automatically.
+
+## CLOUDFLARE WORKERS (WRANGLER DEV)
+
+When running a Cloudflare Workers project via `traforo -- wrangler dev`,
+traforo sets `CLOUDFLARE_INCLUDE_PROCESS_ENV=true` in the child process
+environment. This tells wrangler to pass parent env vars (including
+`TRAFORO_URL`) as local development bindings, so `process.env.TRAFORO_URL`
+works inside workerd.
+
+    traforo -- wrangler dev
+
+    // Inside your worker:
+    const baseUrl = process.env.TRAFORO_URL
+
+This only works when no `.dev.vars` file exists in the project. If you use
+`.dev.vars`, add `TRAFORO_URL` there manually or use a startup script that
+reads the env var.
+
 ## HOW IT WORKS
 
 1. Local client connects to Cloudflare Durable Object via WebSocket

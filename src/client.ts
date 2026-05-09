@@ -251,6 +251,17 @@ export class TunnelClient {
         body = Buffer.from(msg.body, 'base64')
       }
 
+      // Inject standard reverse-proxy headers so the local server knows the
+      // original public hostname and protocol (used by BetterAuth, Next.js,
+      // Express trust-proxy, etc. for correct redirect URLs).
+      const tunnelUrl = new URL(this.url)
+      if (!msg.headers['x-forwarded-host']) {
+        msg.headers['x-forwarded-host'] = tunnelUrl.host
+      }
+      if (!msg.headers['x-forwarded-proto']) {
+        msg.headers['x-forwarded-proto'] = tunnelUrl.protocol.replace(':', '')
+      }
+
       // Make local request
       const res = await fetch(url, {
         method: msg.method,
