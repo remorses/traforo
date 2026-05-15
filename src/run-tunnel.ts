@@ -485,6 +485,13 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     ...(options.serverUrl && { serverUrl: options.serverUrl }),
     ...(options.cacheKey && { cacheKey: options.cacheKey }),
     ...(options.password && { password: options.password }),
+    onFatalError: (err) => {
+      console.error(`\nError: ${err.message}`)
+      if (child) {
+        child.kill()
+      }
+      process.exit(1)
+    },
   })
 
   if (options.cacheKey) {

@@ -1350,15 +1350,38 @@ describe('Tunnel Status and Offline Behavior', () => {
   )
 })
 
+/**
+ * Poll /traforo-status until the tunnel reports the expected online state.
+ * Avoids flaky timing-based sleeps after disconnect/connect.
+ */
+async function waitForTunnelStatus(
+  statusUrl: string,
+  expectedOnline: boolean,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(statusUrl)
+    const data = (await res.json()) as { online: boolean }
+    if (data.online === expectedOnline) {
+      return
+    }
+    await new Promise((r) => setTimeout(r, 300))
+  }
+  throw new Error(
+    `Timed out waiting for tunnel status online=${expectedOnline}`,
+  )
+}
+
 describe('Tunnel Reconnection', () => {
   test(
-    'new upstream connection replaces old one',
+    'can reconnect to tunnel ID after disconnecting',
     async () => {
       const reconnectTunnelId = getTunnelId()
       const localPort = 29876 + Math.floor(Math.random() * 1000)
       const serverUrl = `wss://${reconnectTunnelId}-tunnel-preview.traforo.dev`
+      const statusUrl = `https://${reconnectTunnelId}-tunnel-preview.traforo.dev/traforo-status`
 
-      // Start a local server
       const testServer = await createTestServer(localPort)
 
       // Create first tunnel client
@@ -1370,14 +1393,15 @@ describe('Tunnel Reconnection', () => {
       })
 
       await client1.connect()
+      await waitForTunnelStatus(statusUrl, true)
 
-      // Verify tunnel is online
-      const statusUrl = `https://${reconnectTunnelId}-tunnel-preview.traforo.dev/traforo-status`
-      const status1 = await fetch(statusUrl)
-      const data1 = (await status1.json()) as { online: boolean }
-      expect(data1.online).toBe(true)
+      // Close first client (simulates a restart)
+      client1.close()
 
-      // Create second tunnel client (should replace first)
+      // Poll until the DO processes the disconnect
+      await waitForTunnelStatus(statusUrl, false)
+
+      // Create second tunnel client — should succeed now
       const client2 = new TunnelClient({
         localPort,
         tunnelId: reconnectTunnelId,
@@ -1386,25 +1410,60 @@ describe('Tunnel Reconnection', () => {
       })
 
       await client2.connect()
+      await waitForTunnelStatus(statusUrl, true)
 
-      // Wait for replacement to complete
-      await new Promise((r) => {
-        setTimeout(r, 500)
-      })
-
-      // Tunnel should still be online
-      const status2 = await fetch(statusUrl)
-      const data2 = (await status2.json()) as { online: boolean }
-      expect(data2.online).toBe(true)
-
-      // HTTP request should work through new client
+      // HTTP request should work through the reconnected client
       const tunnelUrl = `https://${reconnectTunnelId}-tunnel-preview.traforo.dev`
       const res = await fetch(`${tunnelUrl}/json`)
       expect(res.status).toBe(200)
 
-      // Clean up
-      client1.close()
       client2.close()
+      await testServer.close()
+    },
+    TEST_TIMEOUT,
+  )
+})
+
+describe('Tunnel Security', () => {
+  test(
+    'rejects second upstream while first is still connected (prevents subdomain hijacking)',
+    async () => {
+      const stableTunnelId = getTunnelId()
+      const localPort = 39876 + Math.floor(Math.random() * 1000)
+      const serverUrl = `wss://${stableTunnelId}-tunnel-preview.traforo.dev`
+
+      const testServer = await createTestServer(localPort)
+
+      // First client claims the tunnel
+      const ownerClient = new TunnelClient({
+        localPort,
+        tunnelId: stableTunnelId,
+        serverUrl,
+        autoReconnect: false,
+      })
+      await ownerClient.connect()
+
+      // Second client tries to steal the subdomain — must be rejected
+      const attackerClient = new TunnelClient({
+        localPort,
+        tunnelId: stableTunnelId,
+        serverUrl,
+        autoReconnect: false,
+      })
+
+      await expect(attackerClient.connect()).rejects.toThrow(/already in use/)
+
+      // Owner's tunnel should still be online and serving traffic
+      const statusUrl = `https://${stableTunnelId}-tunnel-preview.traforo.dev/traforo-status`
+      const statusRes = await fetch(statusUrl)
+      const statusData = (await statusRes.json()) as { online: boolean }
+      expect(statusData.online).toBe(true)
+
+      const tunnelUrl = `https://${stableTunnelId}-tunnel-preview.traforo.dev`
+      const res = await fetch(`${tunnelUrl}/json`)
+      expect(res.status).toBe(200)
+
+      ownerClient.close()
       await testServer.close()
     },
     TEST_TIMEOUT,

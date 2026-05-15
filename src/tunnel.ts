@@ -228,24 +228,14 @@ export class Tunnel {
     // WebSocket upgrade requests
     if (isUpgrade) {
       if (url.pathname === '/traforo-upstream') {
-        // Parse cache key from upstream connection params
-        const cacheKey = url.searchParams.get('_cacheKey')
-        if (cacheKey) {
-          this.cacheKey = cacheKey
-          console.log(`[DO] Edge caching enabled (key: ${cacheKey})`)
-        } else {
-          this.cacheKey = null
-        }
-        // Parse password from upstream connection params
-        const password = url.searchParams.get('_password')
-        if (password) {
-          this.password = password
-          console.log(`[DO] Password protection enabled`)
-        } else {
-          this.password = null
-        }
+        // Parse params but do NOT mutate class fields yet — the connection
+        // may be rejected if an upstream is already connected. Mutating
+        // before the check would let a rejected attacker disable password
+        // protection or caching on the live tunnel.
+        const cacheKey = url.searchParams.get('_cacheKey') || null
+        const password = url.searchParams.get('_password') || null
         console.log(`[DO] Handling upstream connection for ${tunnelId}`)
-        return this.handleUpstreamConnection(tunnelId)
+        return this.handleUpstreamConnection(tunnelId, { cacheKey, password })
       }
       // User WebSocket connection to be proxied
       // Password check for WebSocket upgrades
@@ -393,13 +383,37 @@ export class Tunnel {
   // Upstream (local client) connection
   // ============================================
 
-  private handleUpstreamConnection(tunnelId: string): Response {
-    // Close any existing upstream connection
+  private handleUpstreamConnection(
+    tunnelId: string,
+    params: { cacheKey: string | null; password: string | null },
+  ): Response {
+    // Reject if another upstream is already connected. This prevents a
+    // rogue client from stealing someone else's stable subdomain by
+    // connecting with the same tunnel ID while the original owner is live.
     const existing = this.getUpstream(tunnelId)
     if (existing) {
-      try {
-        existing.close(4009, 'Replaced by new connection')
-      } catch {}
+      console.log(
+        `[DO] Tunnel ${tunnelId}: rejected — upstream already connected`,
+      )
+      const pair = new WebSocketPair()
+      const [client, server] = Object.values(pair)
+      server.accept()
+      server.close(
+        4409,
+        `Tunnel ID "${tunnelId}" is already in use by another client`,
+      )
+      return new Response(null, { status: 101, webSocket: client })
+    }
+
+    // Only apply cache/password state after confirming the connection is
+    // accepted. A rejected upstream must never mutate the live tunnel.
+    this.cacheKey = params.cacheKey
+    this.password = params.password
+    if (this.cacheKey) {
+      console.log(`[DO] Edge caching enabled (key: ${this.cacheKey})`)
+    }
+    if (this.password) {
+      console.log(`[DO] Password protection enabled`)
     }
 
     const pair = new WebSocketPair()
@@ -414,6 +428,12 @@ export class Tunnel {
       ...(this.password && { password: this.password }),
       ...(this.cacheKey && { cacheKey: this.cacheKey }),
     } satisfies Attachment)
+
+    // Send an ACK so the client knows the connection was accepted and can
+    // resolve its connect() promise. Without this, the ws library fires
+    // `open` before the DO has a chance to reject with 4409, making it
+    // impossible for the client to distinguish accepted vs rejected.
+    server.send(JSON.stringify({ type: 'upstream_accepted' }))
 
     // Notify any waiting downstream connections
     const downstreams = this.ctx.getWebSockets(`downstream:${tunnelId}`)
@@ -456,12 +476,12 @@ export class Tunnel {
     for (const [, streaming] of this.streamingHttpRequests) {
       clearTimeout(streaming.timeout)
       try {
-        streaming.writer.close()
+        void streaming.writer.close()
       } catch {}
     }
     this.streamingHttpRequests.clear()
 
-    for (const [connId, pending] of this.pendingWsConnections) {
+    for (const [, pending] of this.pendingWsConnections) {
       clearTimeout(pending.timeout)
       try {
         pending.userWs.close(4011, 'Tunnel disconnected')
@@ -961,7 +981,7 @@ export class Tunnel {
 
     try {
       const chunk = base64ToArrayBuffer(msg.chunk)
-      streaming.writer.write(new Uint8Array(chunk))
+      void streaming.writer.write(new Uint8Array(chunk))
     } catch (err) {
       console.error(`[DO] Failed to write chunk: ${err}`)
     }
@@ -977,7 +997,7 @@ export class Tunnel {
     this.streamingHttpRequests.delete(msg.id)
 
     try {
-      streaming.writer.close()
+      void streaming.writer.close()
     } catch {}
   }
 

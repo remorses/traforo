@@ -47,6 +47,12 @@ type TunnelClientOptions = {
   cacheKey?: string
   /** Password to protect the tunnel */
   password?: string
+  /**
+   * Called when the connection fails with an unrecoverable error (e.g.
+   * code 4409 — tunnel ID already in use). The client sets `closed = true`
+   * and will not attempt to reconnect before calling this callback.
+   */
+  onFatalError?: (error: Error) => void
 }
 
 /**
@@ -102,6 +108,7 @@ export class TunnelClient {
       autoReconnect: true,
       reconnectDelay: 3000,
       cacheKey: undefined,
+      onFatalError: undefined,
       ...options,
     } as Required<TunnelClientOptions>
   }
@@ -125,30 +132,43 @@ export class TunnelClient {
     // console.log(`Connecting to ${wsUrl}...`)
 
     return new Promise((resolve, reject) => {
+      // The DO sends { type: 'upstream_accepted' } after accepting the
+      // upstream. We only resolve connect() when we see that message.
+      // If the DO rejects (close 4409 before ACK), we reject the promise.
+      let accepted = false
+
+      // Safety timeout so connect() doesn't hang forever if the deployed
+      // worker is out of date and doesn't send the ACK.
+      const ackTimeout = setTimeout(() => {
+        if (!accepted) {
+          try {
+            this.ws?.close()
+          } catch {}
+          reject(new Error('Timed out waiting for tunnel acceptance'))
+        }
+      }, 10_000)
+
       this.ws = new WebSocket(wsUrl, {
         agent: createWebSocketAgentFromEnv({ wsUrl }),
       })
 
       this.ws.on('open', () => {
-        const { localHost, localPort, localHttps } = this.options
-        const localProtocol = localHttps ? 'https' : 'http'
-        const localUrl = `${localProtocol}://${localHost}:${localPort}`
-        let message = `Connected with Traforo!\n${this.url}`
-        if (isAgent) {
-          message += `\n\nUse ${localUrl} directly for lower latency. The tunnel URL is for remote access. Show both URLs to the user.`
-        }
-        console.log(message)
-        this.startPingInterval()
-        resolve()
+        // WebSocket is open but the DO might still reject us with 4409.
+        // Wait for the upstream_accepted ACK before resolving.
       })
 
       this.ws.on('error', (err: Error) => {
         console.error('WebSocket error:', err.message)
-        reject(new Error('WebSocket connection failed'))
+        if (!accepted) {
+          clearTimeout(ackTimeout)
+          reject(new Error('WebSocket connection failed'))
+        }
       })
 
       this.ws.on('close', (code: number, reason: Buffer) => {
-        console.log(`Disconnected: ${code} ${reason.toString()}`)
+        const reasonStr = reason.toString()
+        console.log(`Disconnected: ${code} ${reasonStr}`)
+        clearTimeout(ackTimeout)
         this.stopPingInterval()
         this.ws = null
 
@@ -160,6 +180,21 @@ export class TunnelClient {
         }
         this.localWsConnections.clear()
 
+        // 4409 — tunnel ID is already in use. Do not reconnect.
+        if (code === 4409) {
+          this.closed = true
+          const err = new Error(
+            reasonStr ||
+              `Tunnel ID "${this.options.tunnelId}" is already in use by another client`,
+          )
+          if (!accepted) {
+            reject(err)
+          } else {
+            this.options.onFatalError?.(err)
+          }
+          return
+        }
+
         // Auto-reconnect
         if (this.options.autoReconnect && !this.closed) {
           console.log(`Reconnecting in ${this.options.reconnectDelay}ms...`)
@@ -170,7 +205,34 @@ export class TunnelClient {
       })
 
       this.ws.on('message', (data: WebSocket.RawData) => {
-        this.handleMessage(data.toString())
+        const raw = data.toString()
+
+        // Handle the upstream_accepted ACK — resolve connect() and start
+        // processing normal tunnel messages from here on.
+        if (!accepted) {
+          try {
+            const msg = JSON.parse(raw) as { type?: string }
+            if (msg.type === 'upstream_accepted') {
+              accepted = true
+              clearTimeout(ackTimeout)
+              const { localHost, localPort, localHttps } = this.options
+              const localProtocol = localHttps ? 'https' : 'http'
+              const localUrl = `${localProtocol}://${localHost}:${localPort}`
+              let message = `Connected with Traforo!\n${this.url}`
+              if (isAgent) {
+                message += `\n\nUse ${localUrl} directly for lower latency. The tunnel URL is for remote access. Show both URLs to the user.`
+              }
+              console.log(message)
+              this.startPingInterval()
+              resolve()
+              return
+            }
+          } catch {
+            // Not JSON — fall through to handleMessage
+          }
+        }
+
+        this.handleMessage(raw)
       })
     })
   }
