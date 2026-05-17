@@ -134,6 +134,16 @@ Or set it in your .env / startup script and let traforo override only
     // next.config.js
     const baseUrl = process.env.APP_URL || process.env.TRAFORO_URL || 'http://localhost:3000'
 
+## PATH INHERITANCE
+
+Package managers like pnpm and bun prepend `node_modules/.bin` to PATH.
+Traforo passes the full parent environment to child commands, so
+project-local binaries work without `pnpm exec` or `npx`:
+
+    pnpm traforo -- vite dev
+    pnpm traforo -- next start
+    bun traforo -- wrangler dev
+
 ## REVERSE PROXY HEADERS
 
 Traforo injects standard reverse-proxy headers when forwarding requests to
