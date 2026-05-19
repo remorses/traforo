@@ -6,12 +6,12 @@
   "compatibility_flags": ["nodejs_compat"],
   "routes": [
     {
-      "pattern": "traforo.dev/*",
-      "zone_name": "traforo.dev"
+      "custom_domain": true,
+      "pattern": "traforo.dev"
     },
     {
-      "pattern": "www.traforo.dev/*",
-      "zone_name": "traforo.dev"
+      "custom_domain": true,
+      "pattern": "www.traforo.dev"
     }
   ],
 }

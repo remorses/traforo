@@ -23,8 +23,16 @@
   "navigation": {
     "global": {
       "anchors": [
-        { "anchor": "GitHub", "href": "https://github.com/remorses/traforo", "icon": "github" },
-        { "anchor": "npm", "href": "https://www.npmjs.com/package/traforo", "icon": "package" }
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/remorses/traforo",
+          "icon": "github"
+        },
+        {
+          "anchor": "npm",
+          "href": "https://www.npmjs.com/package/traforo",
+          "icon": "package"
+        }
       ]
     },
     "groups": [
@@ -34,5 +42,6 @@
         "pages": ["index"]
       }
     ]
-  }
+  },
+  "decorativeLines": "none"
 }
