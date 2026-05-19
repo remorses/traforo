@@ -1,4 +1,4 @@
-HTTP tunnel via Cloudflare Durable Objects and WebSockets.
+HTTP tunnel via **Cloudflare Durable Objects** and **WebSockets**.
 Expose local servers to the internet with a simple CLI.
 Infinitely scalable with support for Cloudflare CDN caching and password protection.
 
@@ -10,11 +10,18 @@ npm install -g traforo
 
 ## Usage
 
-Expose a local server:
+Expose a **local server** by pointing traforo at a port:
 
 ```bash
 traforo -p 3000
 ```
+
+<Aside>
+<Tip>
+When you pass a command after `--`, traforo **auto-detects** the port from
+the process output so you don't need `-p` at all.
+</Tip>
+</Aside>
 
 Or let traforo auto-detect the port from a dev server command:
 
@@ -23,7 +30,7 @@ traforo -- pnpm dev
 traforo -- next start
 ```
 
-With a custom tunnel ID (only for services safe to expose publicly):
+With a **custom tunnel ID** (only for services safe to expose publicly):
 
 ```bash
 traforo -p 3000 -t my-app
@@ -59,7 +66,7 @@ https://{tunnel-id}-tunnel.traforo.dev
 
 ## Auto Port Detection
 
-When you pass a command after `--`, traforo can detect the local port from the
+When you pass a command after `--`, traforo can **detect the local port** from the
 process output. It watches stdout and stderr for addresses like these:
 
 ```
@@ -69,73 +76,89 @@ localhost:5173
 0.0.0.0:4321
 ```
 
-This works well with common dev servers that print their local URL when they start.
+<Aside>
+<Note>
+If you also pass **`-p`**, traforo uses that explicit port instead of
+auto-detecting from process output.
+</Note>
+</Aside>
 
-If you also pass `-p`, traforo uses that explicit port instead of auto-detecting.
+This works well with common dev servers that print their local URL when they start.
 
 ## Edge Caching
 
-Cache responses at Cloudflare's edge so repeat requests never hit your
+Cache responses at **Cloudflare's edge** so repeat requests never hit your
 local machine:
 
 ```bash
 traforo -p 3000 --cache
 ```
 
-What gets cached:
+<Aside>
+<Info>
+The **`X-Traforo-Cache`** response header shows `HIT`, `MISS`, or `BYPASS`
+for debugging. When `BYPASS`/`MISS` comes from the local origin path,
+`X-Traforo-Cache-Reason` explains why.
+</Info>
+</Aside>
 
-- GET requests where the origin sends cacheable Cache-Control headers
-  (public, max-age, s-maxage)
-- Static asset extensions use Cloudflare-like default fallback TTLs when
-  cache headers are missing: 200/301=120m, 302/303=20m, 404/410=3m
+**What gets cached:**
 
-What never gets cached:
+- **GET requests** where the origin sends cacheable `Cache-Control` headers
+  (`public`, `max-age`, `s-maxage`)
+- **Static asset extensions** use Cloudflare-like default fallback TTLs when
+  cache headers are missing: `200`/`301`=120m, `302`/`303`=20m, `404`/`410`=3m
+
+**What never gets cached:**
 
 - Non-GET requests
-- 206 Partial Content responses (Cache API put() limitation)
-- Responses with Set-Cookie, Cache-Control: no-store/no-cache/private
-- Streaming responses (SSE, ndjson)
-- WebSocket connections
+- `206 Partial Content` responses (Cache API `put()` limitation)
+- Responses with `Set-Cookie`, `Cache-Control: no-store/no-cache/private`
+- **Streaming responses** (SSE, ndjson)
+- **WebSocket connections**
 
 Requests with `Authorization`, `Cache-Control: no-cache/no-store/max-age=0`,
 or `Pragma: no-cache` bypass edge cache lookup.
 
-Cache partitioning lets you bust all cached content by changing the key:
+### Cache Partitioning
+
+**Cache partitioning** lets you bust all cached content by changing the key:
 
 ```bash
 traforo -p 3000 --cache v1     # first deployment
 traforo -p 3000 --cache v2     # new deploy, fresh cache
 ```
 
-Each key creates a separate cache namespace. Old entries expire via TTL.
-
-The `X-Traforo-Cache` response header shows HIT, MISS, or BYPASS for debugging.
-When BYPASS/MISS comes from the local origin path, `X-Traforo-Cache-Reason` explains why.
+Each key creates a **separate cache namespace**. Old entries expire via TTL.
 
 ## Password Protection
 
-Restrict tunnel access with a password:
+Restrict tunnel access with a **password**:
 
 ```bash
 traforo -p 3000 --password mysecret
 ```
 
-Visitors in a browser see a login page. After entering the correct password
+Visitors in a browser see a **login page**. After entering the correct password
 a `traforo-password` cookie is set and they can browse normally.
 
-Non-browser clients (curl, APIs) get a 401 Unauthorized response with
+<Aside>
+<Warning>
+**WebSocket upgrade** requests without the correct cookie are rejected with
+close code `4013`.
+</Warning>
+</Aside>
+
+Non-browser clients (curl, APIs) get a `401 Unauthorized` response with
 instructions to pass the password as a cookie:
 
 ```bash
 curl -b 'traforo-password=mysecret' https://{tunnel-id}-tunnel.traforo.dev
 ```
 
-WebSocket upgrade requests without the correct cookie are rejected with
-close code 4013.
-
 ## TRAFORO_URL Environment Variable
 
-When you run a command after `--`, traforo injects `TRAFORO_URL` into the
+When you run a command after `--`, traforo injects **`TRAFORO_URL`** into the
 child process environment with the full public tunnel URL:
 
 ```
@@ -148,6 +171,13 @@ Your app can read it directly:
 const baseUrl = process.env.TRAFORO_URL
 ```
 
+<Aside>
+<Tip>
+To remap it to a **custom env var** your app already uses, prefix the command
+with `sh -c` and reference `$TRAFORO_URL`.
+</Tip>
+</Aside>
+
 To remap it to a custom env var your app already uses, prefix the command:
 
 ```bash
@@ -156,7 +186,7 @@ traforo -p 3000 -- sh -c 'NEXT_PUBLIC_URL=$TRAFORO_URL exec next dev'
 traforo -p 3000 -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec vite'
 ```
 
-Or set it in your .env / startup script and let traforo override only
+Or set it in your `.env` / startup script and let traforo override only
 `TRAFORO_URL`, reading it where needed:
 
 ```js
@@ -166,8 +196,8 @@ const baseUrl = process.env.APP_URL || process.env.TRAFORO_URL || 'http://localh
 
 ## Path Inheritance
 
-Package managers like pnpm and bun prepend `node_modules/.bin` to PATH.
-Traforo passes the full parent environment to child commands, so
+Package managers like **pnpm** and **bun** prepend `node_modules/.bin` to `PATH`.
+Traforo passes the **full parent environment** to child commands, so
 project-local binaries work without `pnpm exec` or `npx`:
 
 ```bash
@@ -178,7 +208,7 @@ bun traforo -- wrangler dev
 
 ## Reverse Proxy Headers
 
-Traforo injects standard reverse-proxy headers when forwarding requests to
+Traforo injects standard **reverse-proxy headers** when forwarding requests to
 your local server:
 
 ```
@@ -186,19 +216,24 @@ X-Forwarded-Host:  {tunnel-id}-tunnel.traforo.dev
 X-Forwarded-Proto: https
 ```
 
-These headers are only added if not already present in the incoming request.
-Frameworks like **BetterAuth**, **Next.js**, **Express** (with trust-proxy),
-and **Hono** use these to construct correct redirect URLs and absolute links
-instead of pointing back to localhost.
+<Aside>
+<Note>
+These headers are only added if **not already present** in the incoming
+request. No configuration needed.
+</Note>
+</Aside>
 
-No configuration needed. If your framework reads `X-Forwarded-Host` or
-`X-Forwarded-Proto`, redirects and OAuth callbacks will use the public
-tunnel URL automatically.
+Frameworks like **BetterAuth**, **Next.js**, **Express** (with `trust-proxy`),
+and **Hono** use these to construct correct redirect URLs and absolute links
+instead of pointing back to `localhost`.
+
+If your framework reads `X-Forwarded-Host` or `X-Forwarded-Proto`, redirects
+and **OAuth callbacks** will use the public tunnel URL automatically.
 
 ## Cloudflare Workers (Wrangler Dev)
 
 When running a Cloudflare Workers project via `traforo -- wrangler dev`,
-traforo sets `CLOUDFLARE_INCLUDE_PROCESS_ENV=true` in the child process
+traforo sets **`CLOUDFLARE_INCLUDE_PROCESS_ENV=true`** in the child process
 environment. This tells wrangler to pass parent env vars (including
 `TRAFORO_URL`) as local development bindings, so `process.env.TRAFORO_URL`
 works inside workerd.
@@ -212,17 +247,46 @@ traforo -- wrangler dev
 const baseUrl = process.env.TRAFORO_URL
 ```
 
-This only works when no `.dev.vars` file exists in the project. If you use
+<Aside>
+<Warning>
+This only works when **no `.dev.vars` file** exists in the project. If you use
 `.dev.vars`, add `TRAFORO_URL` there manually or use a startup script that
 reads the env var.
+</Warning>
+</Aside>
 
 ## How It Works
 
-1. Local client connects to Cloudflare Durable Object via WebSocket
+```diagram
+  CLI Client                Cloudflare Edge               Local Server
+      │                          │                             │
+      │  WebSocket connect       │                             │
+      │ ────────────────────►    │                             │
+      │                          │                             │
+      │                    ┌─────┴─────┐                       │
+      │                    │  Durable  │    HTTP request        │
+      │                    │  Object   │ ◄─── browser/curl      │
+      │                    └─────┬─────┘                       │
+      │                          │                             │
+      │  forward request via WS  │                             │
+      │ ◄────────────────────    │                             │
+      │                          │                             │
+      │         http://localhost:PORT                           │
+      │ ──────────────────────────────────────────────────►    │
+      │                          │                             │
+      │ ◄──────────────────────────────────────────────────    │
+      │  response                │                             │
+      │ ────────────────────►    │                             │
+      │                    ┌─────┴─────┐                       │
+      │                    │  respond  │ ───► browser/curl      │
+      │                    └───────────┘                       │
+```
+
+1. Local client connects to **Cloudflare Durable Object** via WebSocket
 2. HTTP requests to tunnel URL are forwarded to the DO
-3. DO sends requests over WebSocket to local client
-4. Local client makes request to localhost and returns response
-5. WebSocket connections from users are also proxied through
+3. DO sends requests over **WebSocket** to local client
+4. Local client makes request to **localhost** and returns response
+5. **WebSocket connections** from users are also proxied through
 
 ## API Endpoints
 
