@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0
+
+1. **Prevent subdomain hijacking on stable tunnel IDs** — previously, if Alice was running `traforo -t my-app`, anyone else could run the same command and silently replace her as the upstream, receiving all traffic meant for her server. Now the Durable Object **rejects** new upstream connections when one is already active, closing the attacker's socket with code 4409:
+
+   ```
+   Error: Tunnel ID "my-app" is already in use by another client
+   ```
+
+   Once the original client disconnects, the tunnel ID becomes available again. The client handles 4409 as a fatal error and exits instead of silently retrying.
+
+   The DO now sends an `upstream_accepted` ACK after accepting the upstream WebSocket. The client resolves `connect()` only after receiving this message, not on WebSocket `open`. This makes it possible to reliably distinguish accepted vs rejected connections. Password and cache key state is only applied after the upstream is accepted, so a rejected connection can no longer mutate the live tunnel's configuration. Also added a 10-second ACK timeout so `connect()` doesn't hang forever against an older deployed worker.
+
+2. **Inject `X-Forwarded-Host` and `X-Forwarded-Proto` headers** — when proxying requests to localhost, traforo now injects standard reverse-proxy headers so frameworks like BetterAuth, Next.js, and Express (with trust-proxy) construct correct redirect URLs pointing to the public tunnel instead of `localhost`. Headers are only injected if not already present in the incoming request.
+
+3. **`CLOUDFLARE_INCLUDE_PROCESS_ENV=true` for child processes** — when running commands via `traforo -- ...`, this env var is now set automatically. It lets `wrangler dev` pass parent env vars (including `TRAFORO_URL`) as worker bindings, so `process.env.TRAFORO_URL` works inside workerd without manual `.dev.vars` configuration.
+
 ## 0.5.0
 
 1. **Proxy-aware WebSocket connections** — the tunnel client now automatically routes through HTTP, HTTPS, and SOCKS proxies based on standard environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`):
