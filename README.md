@@ -1,5 +1,3 @@
-# Traforo
-
 HTTP tunnel via Cloudflare Durable Objects and WebSockets.
 Expose local servers to the internet with a simple CLI.
 Infinitely scalable with support for Cloudflare CDN caching and password protection.
