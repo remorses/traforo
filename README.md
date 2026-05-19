@@ -264,21 +264,21 @@ reads the env var.
       │ ────────────────────►    │                             │
       │                          │                             │
       │                    ┌─────┴─────┐                       │
-      │                    │  Durable  │    HTTP request        │
-      │                    │  Object   │ ◄─── browser/curl      │
+      │                    │  Durable  │   HTTP request        │
+      │                    │  Object   │ ◄─── browser/curl     │
       │                    └─────┬─────┘                       │
       │                          │                             │
       │  forward request via WS  │                             │
       │ ◄────────────────────    │                             │
       │                          │                             │
-      │         http://localhost:PORT                           │
+      │         http://localhost:PORT                          │
       │ ──────────────────────────────────────────────────►    │
       │                          │                             │
       │ ◄──────────────────────────────────────────────────    │
       │  response                │                             │
       │ ────────────────────►    │                             │
       │                    ┌─────┴─────┐                       │
-      │                    │  respond  │ ───► browser/curl      │
+      │                    │  respond  │ ───► browser/curl     │
       │                    └───────────┘                       │
 ```
 
