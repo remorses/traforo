@@ -1,70 +1,88 @@
-# TRAFORO
+# Traforo
 
 HTTP tunnel via Cloudflare Durable Objects and WebSockets.
 Expose local servers to the internet with a simple CLI.
 Infinitely scalable with support for Cloudflare CDN caching and password protection.
 
-## INSTALLATION
+## Installation
 
-    npm install -g traforo
+```bash
+npm install -g traforo
+```
 
-## USAGE
+## Usage
 
 Expose a local server:
 
-    traforo -p 3000
+```bash
+traforo -p 3000
+```
 
 Or let traforo auto-detect the port from a dev server command:
 
-    traforo -- pnpm dev
-    traforo -- next start
+```bash
+traforo -- pnpm dev
+traforo -- next start
+```
 
 With a custom tunnel ID (only for services safe to expose publicly):
 
-    traforo -p 3000 -t my-app
+```bash
+traforo -p 3000 -t my-app
+```
 
 Run a command and tunnel it:
 
-    traforo -- next start
-    traforo -- pnpm dev
-    traforo -p 5173 -- vite
-    traforo -p 3000 -- next start    # explicit port overrides auto-detection
+```bash
+traforo -- next start
+traforo -- pnpm dev
+traforo -p 5173 -- vite
+traforo -p 3000 -- next start    # explicit port overrides auto-detection
+```
 
 The tunnel URL will be:
 
-    https://{tunnel-id}-tunnel.traforo.dev
+```
+https://{tunnel-id}-tunnel.traforo.dev
+```
 
-## OPTIONS
+## Options
 
-    -p, --port <port>          Local port to expose (optional with -- command)
-    -t, --tunnel-id [id]       Custom tunnel ID (prefer random default)
-    -c, --cache [key]          Enable edge caching (optional partition key)
-    --password <password>      Protect the tunnel with a password
-    -h, --host [host]          Local host (default: localhost)
-    -s, --server [url]         Custom tunnel server URL
-    --help                     Show help
-    --version                  Show version
+```
+-p, --port <port>          Local port to expose (optional with -- command)
+-t, --tunnel-id [id]       Custom tunnel ID (prefer random default)
+-c, --cache [key]          Enable edge caching (optional partition key)
+--password <password>      Protect the tunnel with a password
+-h, --host [host]          Local host (default: localhost)
+-s, --server [url]         Custom tunnel server URL
+--help                     Show help
+--version                  Show version
+```
 
-## AUTO PORT DETECTION
+## Auto Port Detection
 
 When you pass a command after `--`, traforo can detect the local port from the
 process output. It watches stdout and stderr for addresses like these:
 
-    http://localhost:3000
-    localhost:5173
-    127.0.0.1:8080
-    0.0.0.0:4321
+```
+http://localhost:3000
+localhost:5173
+127.0.0.1:8080
+0.0.0.0:4321
+```
 
 This works well with common dev servers that print their local URL when they start.
 
 If you also pass `-p`, traforo uses that explicit port instead of auto-detecting.
 
-## EDGE CACHING
+## Edge Caching
 
 Cache responses at Cloudflare's edge so repeat requests never hit your
 local machine:
 
-    traforo -p 3000 --cache
+```bash
+traforo -p 3000 --cache
+```
 
 What gets cached:
 
@@ -86,19 +104,23 @@ or `Pragma: no-cache` bypass edge cache lookup.
 
 Cache partitioning lets you bust all cached content by changing the key:
 
-    traforo -p 3000 --cache v1     # first deployment
-    traforo -p 3000 --cache v2     # new deploy, fresh cache
+```bash
+traforo -p 3000 --cache v1     # first deployment
+traforo -p 3000 --cache v2     # new deploy, fresh cache
+```
 
 Each key creates a separate cache namespace. Old entries expire via TTL.
 
-The X-Traforo-Cache response header shows HIT, MISS, or BYPASS for debugging.
-When BYPASS/MISS comes from the local origin path, X-Traforo-Cache-Reason explains why.
+The `X-Traforo-Cache` response header shows HIT, MISS, or BYPASS for debugging.
+When BYPASS/MISS comes from the local origin path, `X-Traforo-Cache-Reason` explains why.
 
-## PASSWORD PROTECTION
+## Password Protection
 
 Restrict tunnel access with a password:
 
-    traforo -p 3000 --password mysecret
+```bash
+traforo -p 3000 --password mysecret
+```
 
 Visitors in a browser see a login page. After entering the correct password
 a `traforo-password` cookie is set and they can browse normally.
@@ -106,51 +128,65 @@ a `traforo-password` cookie is set and they can browse normally.
 Non-browser clients (curl, APIs) get a 401 Unauthorized response with
 instructions to pass the password as a cookie:
 
-    curl -b 'traforo-password=mysecret' https://{tunnel-id}-tunnel.traforo.dev
+```bash
+curl -b 'traforo-password=mysecret' https://{tunnel-id}-tunnel.traforo.dev
+```
 
 WebSocket upgrade requests without the correct cookie are rejected with
 close code 4013.
 
-## TRAFORO_URL ENVIRONMENT VARIABLE
+## TRAFORO_URL Environment Variable
 
 When you run a command after `--`, traforo injects `TRAFORO_URL` into the
 child process environment with the full public tunnel URL:
 
-    TRAFORO_URL=https://{tunnel-id}-tunnel.traforo.dev
+```
+TRAFORO_URL=https://{tunnel-id}-tunnel.traforo.dev
+```
 
 Your app can read it directly:
 
-    const baseUrl = process.env.TRAFORO_URL
+```ts
+const baseUrl = process.env.TRAFORO_URL
+```
 
 To remap it to a custom env var your app already uses, prefix the command:
 
-    traforo -p 3000 -- sh -c 'APP_URL=$TRAFORO_URL exec node server.js'
-    traforo -p 3000 -- sh -c 'NEXT_PUBLIC_URL=$TRAFORO_URL exec next dev'
-    traforo -p 3000 -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec vite'
+```bash
+traforo -p 3000 -- sh -c 'APP_URL=$TRAFORO_URL exec node server.js'
+traforo -p 3000 -- sh -c 'NEXT_PUBLIC_URL=$TRAFORO_URL exec next dev'
+traforo -p 3000 -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec vite'
+```
 
 Or set it in your .env / startup script and let traforo override only
 `TRAFORO_URL`, reading it where needed:
 
-    // next.config.js
-    const baseUrl = process.env.APP_URL || process.env.TRAFORO_URL || 'http://localhost:3000'
+```js
+// next.config.js
+const baseUrl = process.env.APP_URL || process.env.TRAFORO_URL || 'http://localhost:3000'
+```
 
-## PATH INHERITANCE
+## Path Inheritance
 
 Package managers like pnpm and bun prepend `node_modules/.bin` to PATH.
 Traforo passes the full parent environment to child commands, so
 project-local binaries work without `pnpm exec` or `npx`:
 
-    pnpm traforo -- vite dev
-    pnpm traforo -- next start
-    bun traforo -- wrangler dev
+```bash
+pnpm traforo -- vite dev
+pnpm traforo -- next start
+bun traforo -- wrangler dev
+```
 
-## REVERSE PROXY HEADERS
+## Reverse Proxy Headers
 
 Traforo injects standard reverse-proxy headers when forwarding requests to
 your local server:
 
-    X-Forwarded-Host:  {tunnel-id}-tunnel.traforo.dev
-    X-Forwarded-Proto: https
+```
+X-Forwarded-Host:  {tunnel-id}-tunnel.traforo.dev
+X-Forwarded-Proto: https
+```
 
 These headers are only added if not already present in the incoming request.
 Frameworks like **BetterAuth**, **Next.js**, **Express** (with trust-proxy),
@@ -161,7 +197,7 @@ No configuration needed. If your framework reads `X-Forwarded-Host` or
 `X-Forwarded-Proto`, redirects and OAuth callbacks will use the public
 tunnel URL automatically.
 
-## CLOUDFLARE WORKERS (WRANGLER DEV)
+## Cloudflare Workers (Wrangler Dev)
 
 When running a Cloudflare Workers project via `traforo -- wrangler dev`,
 traforo sets `CLOUDFLARE_INCLUDE_PROCESS_ENV=true` in the child process
@@ -169,16 +205,20 @@ environment. This tells wrangler to pass parent env vars (including
 `TRAFORO_URL`) as local development bindings, so `process.env.TRAFORO_URL`
 works inside workerd.
 
-    traforo -- wrangler dev
+```bash
+traforo -- wrangler dev
+```
 
-    // Inside your worker:
-    const baseUrl = process.env.TRAFORO_URL
+```ts
+// Inside your worker:
+const baseUrl = process.env.TRAFORO_URL
+```
 
 This only works when no `.dev.vars` file exists in the project. If you use
 `.dev.vars`, add `TRAFORO_URL` there manually or use a startup script that
 reads the env var.
 
-## HOW IT WORKS
+## How It Works
 
 1. Local client connects to Cloudflare Durable Object via WebSocket
 2. HTTP requests to tunnel URL are forwarded to the DO
@@ -186,27 +226,31 @@ reads the env var.
 4. Local client makes request to localhost and returns response
 5. WebSocket connections from users are also proxied through
 
-## API ENDPOINTS
+## API Endpoints
 
-    /traforo-status         Check if tunnel is online
-    /traforo-upstream       WebSocket endpoint for local client
-    /traforo-login          POST endpoint for password login
-    /*                      All other paths proxied to local server
+```
+/traforo-status         Check if tunnel is online
+/traforo-upstream       WebSocket endpoint for local client
+/traforo-login          POST endpoint for password login
+/*                      All other paths proxied to local server
+```
 
-## LIBRARY USAGE
+## Library Usage
 
-    import { TunnelClient } from 'traforo/client'
-    import { runTunnel } from 'traforo/run-tunnel'
+```ts
+import { TunnelClient } from 'traforo/client'
+import { runTunnel } from 'traforo/run-tunnel'
 
-    const client = new TunnelClient({
-      localPort: 3000,
-      tunnelId: 'my-app',
-      cacheKey: 'v1',       // optional: enable edge caching
-      password: 'mysecret', // optional: password protection
-    })
+const client = new TunnelClient({
+  localPort: 3000,
+  tunnelId: 'my-app',
+  cacheKey: 'v1',       // optional: enable edge caching
+  password: 'mysecret', // optional: password protection
+})
 
-    await client.connect()
+await client.connect()
+```
 
-## LICENSE
+## License
 
 MIT
