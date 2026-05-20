@@ -1,5 +1,8 @@
 import crypto from 'node:crypto'
 import { exec, spawn, type ChildProcess } from 'node:child_process'
+// NOTE: We intentionally use spawn (not spawnSync) for child processes and
+// forward SIGINT/SIGTERM/SIGHUP to the child, waiting for it to exit before
+// calling process.exit(). This prevents orphan processes.
 import net from 'node:net'
 import { promisify } from 'node:util'
 import { TunnelClient } from './client.js'
@@ -401,6 +404,26 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
 
   let child: ChildProcess | null = null
 
+  /**
+   * Send a signal to the child process and wait for it to exit.
+   * Falls back to SIGKILL after 5 seconds if the child doesn't exit gracefully.
+   */
+  function killChild(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
+    if (!child || child.killed) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const forceKillTimer = setTimeout(() => {
+        if (child && !child.killed) child.kill('SIGKILL')
+        resolve()
+      }, 5_000)
+      forceKillTimer.unref()
+      child.on('exit', () => {
+        clearTimeout(forceKillTimer)
+        resolve()
+      })
+      child.kill(signal)
+    })
+  }
+
   // Compute tunnel URL early so it can be injected into the child env
   const baseDomain = options.baseDomain || 'traforo.dev'
   const tunnelUrl = `https://${tunnelId}-tunnel.${baseDomain}`
@@ -467,7 +490,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
       console.log(`Port ${port} is ready!\n`)
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err))
-      spawnedChild.kill()
+      await killChild()
       process.exit(1)
     }
   }
@@ -487,10 +510,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     ...(options.password && { password: options.password }),
     onFatalError: (err) => {
       console.error(`\nError: ${err.message}`)
-      if (child) {
-        child.kill()
-      }
-      process.exit(1)
+      killChild().then(() => process.exit(1))
     },
   })
 
@@ -504,19 +524,22 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     console.log(`Password protection enabled`)
   }
 
-  // Handle shutdown
-  const cleanup = () => {
+  // Handle shutdown — forward signal to child process and wait for it to exit
+  // before exiting ourselves, so we never leave orphan processes.
+  let cleaningUp = false
+  const cleanup = (signal: NodeJS.Signals) => {
+    if (cleaningUp) return
+    cleaningUp = true
+
     console.log('\nShutting down...')
     removeLockfile(port, process.pid)
     client.close()
-    if (child) {
-      child.kill()
-    }
-    process.exit(0)
+    killChild(signal).then(() => process.exit(0))
   }
 
-  process.on('SIGINT', cleanup)
-  process.on('SIGTERM', cleanup)
+  process.on('SIGINT', () => cleanup('SIGINT'))
+  process.on('SIGTERM', () => cleanup('SIGTERM'))
+  process.on('SIGHUP', () => cleanup('SIGHUP'))
 
   try {
     await client.connect()
@@ -537,9 +560,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
       'Failed to connect:',
       err instanceof Error ? err.message : String(err),
     )
-    if (child) {
-      child.kill()
-    }
+    await killChild()
     process.exit(1)
   }
 }
