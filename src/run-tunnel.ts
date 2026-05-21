@@ -64,12 +64,27 @@ const LOCAL_PORT_PATTERNS = [
   /\bport\s+(\d{1,5})\b/i,
 ]
 
+// Lines containing these keywords are noise from debug/inspector/profiler
+// output, not dev server "ready" messages. Skip them to avoid detecting
+// the wrong port (e.g. "Default inspector port 9229 not available").
+const IGNORED_LINE_PATTERNS = [
+  /\binspector\b/i,
+  /\bdebug(?:ger)?\b/i,
+  /\bdevtools\b/i,
+  /\bcpu[- ]?prof/i,
+]
+
 export function detectPortFromText(text: string): number | null {
-  for (const pattern of LOCAL_PORT_PATTERNS) {
-    const match = text.match(pattern)
-    const port = Number(match?.[1])
-    if (port >= 1 && port <= 65535) {
-      return port
+  // Process line by line so we can skip noisy lines before pattern-matching.
+  const lines = text.split('\n')
+  for (const line of lines) {
+    if (IGNORED_LINE_PATTERNS.some((p) => p.test(line))) continue
+    for (const pattern of LOCAL_PORT_PATTERNS) {
+      const match = line.match(pattern)
+      const port = Number(match?.[1])
+      if (port >= 1 && port <= 65535) {
+        return port
+      }
     }
   }
   return null

@@ -107,6 +107,28 @@ describe('run-tunnel security defaults', () => {
     expect(detectPortFromText('listening on localhost:70000')).toBeNull()
     expect(detectPortFromText('some random log line')).toBeNull()
   })
+
+  test('ignores Node.js inspector port lines', () => {
+    expect(detectPortFromText('Default inspector port 9229 not available, using 9234 instead')).toBeNull()
+    expect(detectPortFromText('Debugger listening on ws://127.0.0.1:9229')).toBeNull()
+    expect(detectPortFromText('Debugger attached.')).toBeNull()
+  })
+
+  test('detects correct port when inspector noise appears before the real URL', () => {
+    const output = [
+      'Default inspector port 9229 not available, using 9234 instead',
+      '',
+      '  VITE v8.0.13  ready in 4535 ms',
+      '',
+      '  ➜  Local:   http://localhost:4173/',
+    ].join('\n')
+    expect(detectPortFromText(output)).toBe(4173)
+  })
+
+  test('ignores devtools and cpu-prof lines', () => {
+    expect(detectPortFromText('DevTools listening on ws://127.0.0.1:9222')).toBeNull()
+    expect(detectPortFromText('cpu-prof output saved to port 8080')).toBeNull()
+  })
 })
 
 describe('lockfile', () => {
