@@ -64,14 +64,16 @@ const LOCAL_PORT_PATTERNS = [
   /\bport\s+(\d{1,5})\b/i,
 ]
 
-// Lines containing these keywords are noise from debug/inspector/profiler
+// Lines matching these patterns are noise from debug/inspector/profiler
 // output, not dev server "ready" messages. Skip them to avoid detecting
 // the wrong port (e.g. "Default inspector port 9229 not available").
+// Patterns are intentionally specific to avoid false negatives on
+// legitimate lines like "Debug server listening on http://localhost:4173".
 const IGNORED_LINE_PATTERNS = [
-  /\binspector\b/i,
-  /\bdebug(?:ger)?\b/i,
-  /\bdevtools\b/i,
-  /\bcpu[- ]?prof/i,
+  /\binspector\b.*\bport\b/i,
+  /\bdebugger (?:listening|attached)\b/i,
+  /\bdevtools listening\b/i,
+  /\bcpu[- ]?prof\b/i,
 ]
 
 export function detectPortFromText(text: string): number | null {
