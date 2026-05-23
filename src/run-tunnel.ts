@@ -99,7 +99,7 @@ export function detectPortFromText(text: string): number | null {
 async function waitForPort(
   port: number,
   host = 'localhost',
-  timeoutMs = 60_000,
+  timeoutMs = 120_000,
 ): Promise<void> {
   const start = Date.now()
   const checkInterval = 500
@@ -132,7 +132,7 @@ async function waitForPort(
 
 async function detectPortFromProcessOutput(
   child: ChildProcess,
-  timeoutMs = 60_000,
+  timeoutMs = 120_000,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     let settled = false
