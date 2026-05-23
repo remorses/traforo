@@ -427,17 +427,18 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
    */
   function killChild(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
     if (!child || child.killed) return Promise.resolve()
+    const c = child
     return new Promise<void>((resolve) => {
       const forceKillTimer = setTimeout(() => {
-        if (child && !child.killed) child.kill('SIGKILL')
+        if (!c.killed) c.kill('SIGKILL')
         resolve()
       }, 5_000)
       forceKillTimer.unref()
-      child.on('exit', () => {
+      c.on('exit', () => {
         clearTimeout(forceKillTimer)
         resolve()
       })
-      child.kill(signal)
+      c.kill(signal)
     })
   }
 

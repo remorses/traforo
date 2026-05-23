@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.1
+
+1. **Fixed orphan child processes on exit** — previously, `traforo -- <command>` would call `child.kill()` followed by an immediate `process.exit()`, leaving the child running. Now traforo forwards the original signal (`SIGINT`, `SIGTERM`, `SIGHUP`) to the child, waits for it to exit, and falls back to `SIGKILL` after 5 seconds if it doesn't terminate.
+
+2. **Fixed false port detection from Node.js inspector output** — lines like `"Default inspector port 9229 not available"` were being matched as the dev server port, causing traforo to connect to the wrong port. Port detection now skips inspector, debugger, and devtools output before applying URL/port patterns:
+
+   ```
+   # This no longer triggers a false match:
+   Debugger listening on ws://127.0.0.1:9229/...
+   Default inspector port 9229 not available
+
+   # Only the real dev server line is detected:
+   Local: http://localhost:4173/
+   ```
+
 ## 0.6.0
 
 1. **Prevent subdomain hijacking on stable tunnel IDs** — previously, if Alice was running `traforo -t my-app`, anyone else could run the same command and silently replace her as the upstream, receiving all traffic meant for her server. Now the Durable Object **rejects** new upstream connections when one is already active, closing the attacker's socket with code 4409:
