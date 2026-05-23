@@ -58,25 +58,21 @@ export type RunTunnelOptions = {
   kill?: boolean
 }
 
-const LOCAL_PORT_PATTERNS = [
-  /(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d{1,5})/i,
-  /\blistening(?:\s+at|\s+on)?\s+(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d{1,5})/i,
-  /\bport\s+(\d{1,5})\b/i,
-]
+// Only match lines containing a local URL (host:port). This avoids false
+// positives from noisy lines like "Port 5173 is in use" or "Default
+// inspector port 9229 not available" that mention a port number without
+// an actual URL. Every modern dev server prints a URL with at least
+// `localhost:PORT` or `127.0.0.1:PORT`.
+const LOCAL_PORT_PATTERN =
+  /(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d{1,5})/i
 
-// Lines matching these patterns are noise from debug/inspector/profiler
-// output, not dev server "ready" messages. Skip them to avoid detecting
-// the wrong port (e.g. "Default inspector port 9229 not available").
-// Patterns are intentionally specific to avoid false negatives on
-// legitimate lines like "Debug server listening on http://localhost:4173".
+// Lines matching these patterns are noise from debug/inspector output,
+// not dev server "ready" messages. These lines can contain bare
+// host:port strings (e.g. ws://127.0.0.1:9229) that would otherwise
+// match LOCAL_PORT_PATTERN.
 const IGNORED_LINE_PATTERNS = [
-  /\binspector\b.*\bport\b/i,
   /\bdebugger (?:listening|attached)\b/i,
   /\bdevtools listening\b/i,
-  /\bcpu[- ]?prof\b/i,
-  // Vite/Next.js "Port X is in use" fallback messages. These mention the
-  // *occupied* port, not the one the server actually binds to.
-  /\bport\s+\d+\s+is\s+in\s+use\b/i,
 ]
 
 export function detectPortFromText(text: string): number | null {
@@ -84,12 +80,10 @@ export function detectPortFromText(text: string): number | null {
   const lines = text.split('\n')
   for (const line of lines) {
     if (IGNORED_LINE_PATTERNS.some((p) => p.test(line))) continue
-    for (const pattern of LOCAL_PORT_PATTERNS) {
-      const match = line.match(pattern)
-      const port = Number(match?.[1])
-      if (port >= 1 && port <= 65535) {
-        return port
-      }
+    const match = line.match(LOCAL_PORT_PATTERN)
+    const port = Number(match?.[1])
+    if (port >= 1 && port <= 65535) {
+      return port
     }
   }
   return null
