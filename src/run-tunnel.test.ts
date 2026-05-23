@@ -129,6 +129,22 @@ describe('run-tunnel security defaults', () => {
     expect(detectPortFromText('DevTools listening on ws://127.0.0.1:9222')).toBeNull()
     expect(detectPortFromText('cpu-prof output saved to port 8080')).toBeNull()
   })
+
+  test('ignores "port in use" lines and detects the actual port', () => {
+    expect(detectPortFromText('Port 5173 is in use, trying another one...')).toBeNull()
+    expect(detectPortFromText('Port 5174 is in use, trying another one...')).toBeNull()
+
+    const viteOutput = [
+      'Port 5173 is in use, trying another one...',
+      'Port 5174 is in use, trying another one...',
+      'Port 5175 is in use, trying another one...',
+      '',
+      '  VITE v8.0.11  ready in 814 ms',
+      '',
+      '  ➜  Local:   http://localhost:5176/',
+    ].join('\n')
+    expect(detectPortFromText(viteOutput)).toBe(5176)
+  })
 })
 
 describe('lockfile', () => {

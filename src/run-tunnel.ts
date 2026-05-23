@@ -74,6 +74,9 @@ const IGNORED_LINE_PATTERNS = [
   /\bdebugger (?:listening|attached)\b/i,
   /\bdevtools listening\b/i,
   /\bcpu[- ]?prof\b/i,
+  // Vite/Next.js "Port X is in use" fallback messages. These mention the
+  // *occupied* port, not the one the server actually binds to.
+  /\bport\s+\d+\s+is\s+in\s+use\b/i,
 ]
 
 export function detectPortFromText(text: string): number | null {
