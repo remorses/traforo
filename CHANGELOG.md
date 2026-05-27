@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+1. **Self-hosting support via `TRAFORO_BASE_DOMAIN`** — deploy your own traforo instance on Cloudflare and point the CLI at it with a single env variable:
+
+   ```bash
+   export TRAFORO_BASE_DOMAIN=example.com
+   traforo -p 3000
+   # => https://{id}-tunnel.example.com
+   ```
+
+   Works with both the CLI and the Node.js `TunnelClient` API (pass `baseDomain` or set the env var). See the [Self-Hosting guide](./README.md#self-hosting) for full setup instructions including wrangler deployment and wildcard DNS configuration.
+
+2. **Fixed port auto-detection false positives from Vite** — when Vite's default port is occupied, it prints lines like `Port 5173 is in use, trying another one...` before binding to a different port. The port detection regex matched these noise lines, causing traforo to detect the occupied port instead of the one Vite actually binds to. Port detection now only matches lines containing an actual URL (`localhost:PORT`, `127.0.0.1:PORT`, etc.), eliminating false positives from any "port X is in use" style messages.
+
 ## 0.6.1
 
 1. **Fixed orphan child processes on exit** — previously, `traforo -- <command>` would call `child.kill()` followed by an immediate `process.exit()`, leaving the child running. Now traforo forwards the original signal (`SIGINT`, `SIGTERM`, `SIGHUP`) to the child, waits for it to exit, and falls back to `SIGKILL` after 5 seconds if it doesn't terminate.
