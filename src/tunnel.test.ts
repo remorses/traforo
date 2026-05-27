@@ -6,7 +6,7 @@
  * WebSocket, and SSE requests work through the tunnel.
  *
  * Run: pnpm test
- * Note: Requires preview deployment to be active (pnpm deploy:preview)
+ * Note: Requires preview deployment to be active (pnpm deploy)
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
@@ -34,9 +34,18 @@ function createTestServer(port: number): Promise<{
 }> {
   return new Promise((resolve) => {
     const wsConnections = new Set<WebSocket>()
+    const cacheCounters = {
+      staticAsset: 0,
+      pragmaNoCache: 0,
+      varyStar: 0,
+      explicit: 0,
+      private: 0,
+      noCache: 0,
+      setCookie: 0,
+    }
 
     const server = http.createServer((req, res) => {
-      const url = new URL(req.url || '/', `http://localhost:${port}`)
+      const url = new URL(req.url || '/', `http://127.0.0.1:${port}`)
       const path = url.pathname
 
       // Echo endpoint - returns request info
@@ -59,11 +68,12 @@ function createTestServer(port: number): Promise<{
             JSON.stringify({
               method: req.method,
               path: url.pathname,
+              search: url.search,
               query: Object.fromEntries(url.searchParams),
               headers,
               body: body.length > 0 ? body.toString() : null,
               bodyLength: body.length,
-            })
+            }),
           )
         })
         return
@@ -80,6 +90,69 @@ function createTestServer(port: number): Promise<{
       if (path === '/json') {
         res.setHeader('Content-Type', 'application/json')
         res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }))
+        return
+      }
+
+      // Static asset-like endpoint without Cache-Control
+      if (path === '/asset.js') {
+        cacheCounters.staticAsset += 1
+        res.setHeader('Content-Type', 'application/javascript')
+        res.end(`window.__assetCounter=${cacheCounters.staticAsset};`)
+        return
+      }
+
+      // Static asset-like endpoint with Pragma no-cache
+      if (path === '/pragma.js') {
+        cacheCounters.pragmaNoCache += 1
+        res.setHeader('Content-Type', 'application/javascript')
+        res.setHeader('Pragma', 'no-cache')
+        res.end(`window.__pragmaCounter=${cacheCounters.pragmaNoCache};`)
+        return
+      }
+
+      // Static asset-like endpoint with Vary: * (must never be cached)
+      if (path === '/vary-star.js') {
+        cacheCounters.varyStar += 1
+        res.setHeader('Content-Type', 'application/javascript')
+        res.setHeader('Vary', '*')
+        res.end(`window.__varyCounter=${cacheCounters.varyStar};`)
+        return
+      }
+
+      // Explicitly cacheable endpoint
+      if (path === '/cache-explicit') {
+        cacheCounters.explicit += 1
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'public, max-age=120')
+        res.end(JSON.stringify({ counter: cacheCounters.explicit }))
+        return
+      }
+
+      // Explicitly non-cacheable endpoint (private)
+      if (path === '/cache-private') {
+        cacheCounters.private += 1
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'private, max-age=120')
+        res.end(JSON.stringify({ counter: cacheCounters.private }))
+        return
+      }
+
+      // Explicitly non-cacheable endpoint (no-cache)
+      if (path === '/cache-no-cache') {
+        cacheCounters.noCache += 1
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'no-cache')
+        res.end(JSON.stringify({ counter: cacheCounters.noCache }))
+        return
+      }
+
+      // Should bypass due to Set-Cookie even if cache headers are cacheable
+      if (path === '/cache-set-cookie') {
+        cacheCounters.setCookie += 1
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'public, max-age=120')
+        res.setHeader('Set-Cookie', `sid=${cacheCounters.setCookie}; Path=/; HttpOnly`)
+        res.end(JSON.stringify({ counter: cacheCounters.setCookie }))
         return
       }
 
@@ -155,7 +228,9 @@ function createTestServer(port: number): Promise<{
         const maxCount = 5
         const interval = setInterval(() => {
           count++
-          res.write(`data: {"count":${count},"time":"${new Date().toISOString()}"}\n\n`)
+          res.write(
+            `data: {"count":${count},"time":"${new Date().toISOString()}"}\n\n`,
+          )
 
           if (count >= maxCount) {
             clearInterval(interval)
@@ -178,7 +253,7 @@ function createTestServer(port: number): Promise<{
     const wss = new WebSocketServer({ server })
 
     wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
-      const url = new URL(req.url || '/', `http://localhost:${port}`)
+      const url = new URL(req.url || '/', `http://127.0.0.1:${port}`)
       wsConnections.add(ws)
 
       // Send welcome with connection count
@@ -188,7 +263,7 @@ function createTestServer(port: number): Promise<{
           timestamp: Date.now(),
           connectionCount: wsConnections.size,
           path: url.pathname,
-        })
+        }),
       )
 
       ws.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
@@ -200,7 +275,12 @@ function createTestServer(port: number): Promise<{
 
           // Check for special commands
           if (message === 'GET_CONNECTION_COUNT') {
-            ws.send(JSON.stringify({ type: 'connection_count', count: wsConnections.size }))
+            ws.send(
+              JSON.stringify({
+                type: 'connection_count',
+                count: wsConnections.size,
+              }),
+            )
             return
           }
 
@@ -208,7 +288,12 @@ function createTestServer(port: number): Promise<{
             // Broadcast to all connections including self
             for (const client of wsConnections) {
               if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ type: 'broadcast', message: 'Hello from server!' }))
+                client.send(
+                  JSON.stringify({
+                    type: 'broadcast',
+                    message: 'Hello from server!',
+                  }),
+                )
               }
             }
             return
@@ -220,7 +305,7 @@ function createTestServer(port: number): Promise<{
               type: 'echo',
               message,
               timestamp: Date.now(),
-            })
+            }),
           )
         }
       })
@@ -281,6 +366,7 @@ describe('Traforo Tunnel Integration', () => {
       localPort,
       tunnelId,
       serverUrl,
+      cacheKey: `it-${Date.now()}`,
       autoReconnect: false,
     })
 
@@ -309,7 +395,7 @@ describe('Traforo Tunnel Integration', () => {
         const body = await res.text()
         expect(body).toContain('<h1>Test Server</h1>')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -323,7 +409,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.status).toBe('ok')
         expect(typeof data.timestamp).toBe('number')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -335,14 +421,33 @@ describe('Traforo Tunnel Integration', () => {
         const data = (await res.json()) as {
           method: string
           path: string
+          search: string
           query: Record<string, string>
         }
         expect(data.method).toBe('GET')
         expect(data.path).toBe('/echo')
+        expect(data.search).toBe('?foo=bar&baz=123')
         expect(data.query.foo).toBe('bar')
         expect(data.query.baz).toBe('123')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'preserves bare query flags used by Vite asset imports',
+      async () => {
+        const res = await fetch(`${tunnelUrl}/echo?import&url&inline`)
+        expect(res.status).toBe(200)
+
+        const data = (await res.json()) as {
+          path: string
+          search: string
+        }
+
+        expect(data.path).toBe('/echo')
+        expect(data.search).toBe('?import&url&inline')
+      },
+      TEST_TIMEOUT,
     )
 
     test(
@@ -360,7 +465,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.received).toBe(body)
         expect(data.length).toBe(body.length)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -369,7 +474,7 @@ describe('Traforo Tunnel Integration', () => {
         const res = await fetch(`${tunnelUrl}/unknown-path-xyz`)
         expect(res.status).toBe(404)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -386,7 +491,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.headers['x-custom-header']).toBe('test-value')
         expect(data.headers['x-another-header']).toBe('another-value')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -403,7 +508,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.method).toBe('PUT')
         expect(data.body).toBe(body)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -413,7 +518,7 @@ describe('Traforo Tunnel Integration', () => {
         const data = (await res.json()) as { method: string }
         expect(data.method).toBe('DELETE')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -430,7 +535,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(data.method).toBe('PATCH')
         expect(data.body).toBe(body)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -441,7 +546,7 @@ describe('Traforo Tunnel Integration', () => {
         const body = await res.text()
         expect(body).toBe('')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -452,7 +557,7 @@ describe('Traforo Tunnel Integration', () => {
         const data = (await res.json()) as { error: string }
         expect(data.error).toBe('Internal Server Error')
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -464,7 +569,7 @@ describe('Traforo Tunnel Integration', () => {
         const body = await res.text()
         expect(body.length).toBe(size)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -481,7 +586,7 @@ describe('Traforo Tunnel Integration', () => {
         const data = (await res.json()) as { bodyLength: number }
         expect(data.bodyLength).toBe(size)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -506,21 +611,220 @@ describe('Traforo Tunnel Integration', () => {
         expect(responseData.length).toBe(binaryData.length)
         expect(responseData).toEqual(binaryData)
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
       'concurrent HTTP requests',
       async () => {
         const requests = Array.from({ length: 5 }, (_, i) => {
-          return fetch(`${tunnelUrl}/echo?request=${i}`).then((res) => res.json())
+          return fetch(`${tunnelUrl}/echo?request=${i}`).then((res) =>
+            res.json(),
+          )
         })
 
-        const results = (await Promise.all(requests)) as Array<{ query: { request: string } }>
+        const results = (await Promise.all(requests)) as Array<{
+          query: { request: string }
+        }>
         const requestIds = results.map((r) => r.query.request).sort()
         expect(requestIds).toEqual(['0', '1', '2', '3', '4'])
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
+    )
+  })
+
+  describe('Edge Caching', () => {
+    test(
+      'caches static asset paths with Cloudflare-like defaults',
+      async () => {
+        const key = `${Date.now()}-asset`
+        const url = `${tunnelUrl}/asset.js?key=${key}`
+
+        const first = await fetch(url)
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('MISS')
+        const firstBody = await first.text()
+
+        const second = await fetch(url)
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('HIT')
+        const secondBody = await second.text()
+
+        expect(secondBody).toBe(firstBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'caches explicit Cache-Control responses on non-static paths',
+      async () => {
+        const key = `${Date.now()}-explicit`
+        const url = `${tunnelUrl}/cache-explicit?key=${key}`
+
+        const first = await fetch(url)
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('MISS')
+        const firstData = (await first.json()) as { counter: number }
+
+        const second = await fetch(url)
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('HIT')
+        const secondData = (await second.json()) as { counter: number }
+
+        expect(secondData.counter).toBe(firstData.counter)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'Authorization requests bypass lookup even when anonymous cache exists',
+      async () => {
+        const key = `${Date.now()}-auth`
+        const url = `${tunnelUrl}/asset.js?key=${key}`
+        const authHeaders = { Authorization: 'Bearer test-token' }
+
+        const warmAnonymous = await fetch(url)
+        expect(warmAnonymous.status).toBe(200)
+        expect(warmAnonymous.headers.get('x-traforo-cache')).toBe('MISS')
+        const warmBody = await warmAnonymous.text()
+
+        const first = await fetch(url, { headers: authHeaders })
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(first.headers.get('x-traforo-cache-reason')).toBe(
+          'request-has-authorization',
+        )
+        const firstBody = await first.text()
+
+        const second = await fetch(url, { headers: authHeaders })
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(second.headers.get('x-traforo-cache-reason')).toBe(
+          'request-has-authorization',
+        )
+        const secondBody = await second.text()
+
+        const finalAnonymous = await fetch(url)
+        expect(finalAnonymous.status).toBe(200)
+        expect(finalAnonymous.headers.get('x-traforo-cache')).toBe('HIT')
+        const finalBody = await finalAnonymous.text()
+
+        expect(firstBody).not.toBe(warmBody)
+        expect(secondBody).not.toBe(firstBody)
+        expect(finalBody).toBe(warmBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'request Cache-Control no-cache bypasses lookup and keeps cached copy intact',
+      async () => {
+        const key = `${Date.now()}-req-no-cache`
+        const url = `${tunnelUrl}/asset.js?key=${key}`
+
+        const warm = await fetch(url)
+        expect(warm.status).toBe(200)
+        expect(warm.headers.get('x-traforo-cache')).toBe('MISS')
+        const warmBody = await warm.text()
+
+        const bypass = await fetch(url, {
+          headers: { 'Cache-Control': 'no-cache' },
+        })
+        expect(bypass.status).toBe(200)
+        expect(bypass.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(bypass.headers.get('x-traforo-cache-reason')).toBe(
+          'request-cache-control-no-cache',
+        )
+        const bypassBody = await bypass.text()
+
+        const cached = await fetch(url)
+        expect(cached.status).toBe(200)
+        expect(cached.headers.get('x-traforo-cache')).toBe('HIT')
+        const cachedBody = await cached.text()
+
+        expect(bypassBody).not.toBe(warmBody)
+        expect(cachedBody).toBe(warmBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'does not cache static assets with Pragma no-cache',
+      async () => {
+        const key = `${Date.now()}-pragma`
+        const url = `${tunnelUrl}/pragma.js?key=${key}`
+
+        const first = await fetch(url)
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(first.headers.get('x-traforo-cache-reason')).toBe(
+          'response-pragma-no-cache',
+        )
+        const firstBody = await first.text()
+
+        const second = await fetch(url)
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(second.headers.get('x-traforo-cache-reason')).toBe(
+          'response-pragma-no-cache',
+        )
+        const secondBody = await second.text()
+
+        expect(secondBody).not.toBe(firstBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'does not cache static assets with Vary star',
+      async () => {
+        const key = `${Date.now()}-vary`
+        const url = `${tunnelUrl}/vary-star.js?key=${key}`
+
+        const first = await fetch(url)
+        expect(first.status).toBe(200)
+        expect(first.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(first.headers.get('x-traforo-cache-reason')).toBe(
+          'response-vary-star-not-cacheable',
+        )
+        const firstBody = await first.text()
+
+        const second = await fetch(url)
+        expect(second.status).toBe(200)
+        expect(second.headers.get('x-traforo-cache')).toBe('BYPASS')
+        expect(second.headers.get('x-traforo-cache-reason')).toBe(
+          'response-vary-star-not-cacheable',
+        )
+        const secondBody = await second.text()
+
+        expect(secondBody).not.toBe(firstBody)
+      },
+      TEST_TIMEOUT,
+    )
+
+    test(
+      'bypasses private/no-cache/set-cookie responses',
+      async () => {
+        const cases = ['/cache-private', '/cache-no-cache', '/cache-set-cookie']
+
+        for (const path of cases) {
+          const key = `${Date.now()}-${path}`
+          const url = `${tunnelUrl}${path}?key=${key}`
+
+          const first = await fetch(url)
+          expect(first.status).toBe(200)
+          expect(first.headers.get('x-traforo-cache')).toBe('BYPASS')
+          const firstData = (await first.json()) as { counter: number }
+
+          const second = await fetch(url)
+          expect(second.status).toBe(200)
+          expect(second.headers.get('x-traforo-cache')).toBe('BYPASS')
+          const secondData = (await second.json()) as { counter: number }
+
+          expect(secondData.counter).toBeGreaterThan(firstData.counter)
+        }
+      },
+      TEST_TIMEOUT,
     )
   })
 
@@ -556,7 +860,7 @@ describe('Traforo Tunnel Integration', () => {
         expect(events.length).toBe(5)
         expect(events.map((e) => e.count)).toEqual([1, 2, 3, 4, 5])
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
   })
 
@@ -587,13 +891,16 @@ describe('Traforo Tunnel Integration', () => {
           })
         })
 
-        const parsed = JSON.parse(welcomeMessage) as { type: string; timestamp: number }
+        const parsed = JSON.parse(welcomeMessage) as {
+          type: string
+          timestamp: number
+        }
         expect(parsed.type).toBe('connected')
         expect(typeof parsed.timestamp).toBe('number')
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -636,13 +943,16 @@ describe('Traforo Tunnel Integration', () => {
           })
         })
 
-        const parsed = JSON.parse(echoResponse) as { type: string; message: string }
+        const parsed = JSON.parse(echoResponse) as {
+          type: string
+          message: string
+        }
         expect(parsed.type).toBe('echo')
         expect(parsed.message).toBe(testMessage)
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -674,7 +984,10 @@ describe('Traforo Tunnel Integration', () => {
         const responses: string[] = []
 
         ws.on('message', (data: WebSocket.RawData) => {
-          const parsed = JSON.parse(data.toString()) as { type: string; message: string }
+          const parsed = JSON.parse(data.toString()) as {
+            type: string
+            message: string
+          }
           if (parsed.type === 'echo') {
             responses.push(parsed.message)
           }
@@ -696,7 +1009,7 @@ describe('Traforo Tunnel Integration', () => {
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -722,9 +1035,14 @@ describe('Traforo Tunnel Integration', () => {
             })
 
             ws.once('message', (data: WebSocket.RawData) => {
-              const parsed = JSON.parse(data.toString()) as { type: string; connectionCount: number }
+              const parsed = JSON.parse(data.toString()) as {
+                type: string
+                connectionCount: number
+              }
               if (parsed.type === 'connected') {
-                welcomeMessages.push({ connectionCount: parsed.connectionCount })
+                welcomeMessages.push({
+                  connectionCount: parsed.connectionCount,
+                })
               }
               resolve()
             })
@@ -750,7 +1068,7 @@ describe('Traforo Tunnel Integration', () => {
           setTimeout(r, 200)
         })
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -808,7 +1126,7 @@ describe('Traforo Tunnel Integration', () => {
           ws.close()
         }
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -855,7 +1173,7 @@ describe('Traforo Tunnel Integration', () => {
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -903,7 +1221,7 @@ describe('Traforo Tunnel Integration', () => {
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
 
     test(
@@ -935,7 +1253,10 @@ describe('Traforo Tunnel Integration', () => {
         const responses: string[] = []
 
         ws.on('message', (data: WebSocket.RawData) => {
-          const parsed = JSON.parse(data.toString()) as { type: string; message: string }
+          const parsed = JSON.parse(data.toString()) as {
+            type: string
+            message: string
+          }
           if (parsed.type === 'echo') {
             responses.push(parsed.message)
           }
@@ -953,12 +1274,15 @@ describe('Traforo Tunnel Integration', () => {
         expect(responses.length).toBe(messageCount)
         // Messages should arrive (order may vary due to async nature)
         const sortedResponses = responses.sort()
-        const expected = Array.from({ length: messageCount }, (_, i) => `rapid-${i}`).sort()
+        const expected = Array.from(
+          { length: messageCount },
+          (_, i) => `rapid-${i}`,
+        ).sort()
         expect(sortedResponses).toEqual(expected)
 
         ws.close()
       },
-      TEST_TIMEOUT
+      TEST_TIMEOUT,
     )
   })
 })
@@ -977,7 +1301,7 @@ describe('Tunnel Status and Offline Behavior', () => {
       expect(data.online).toBe(false)
       expect(data.tunnelId).toBe(offlineTunnelId)
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -992,7 +1316,7 @@ describe('Tunnel Status and Offline Behavior', () => {
       const body = await res.text()
       expect(body.toLowerCase()).toContain('offline')
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -1002,37 +1326,62 @@ describe('Tunnel Status and Offline Behavior', () => {
       const wsUrl = `wss://${offlineTunnelId}-tunnel-preview.traforo.dev/ws`
       const ws = new WebSocket(wsUrl)
 
-      const closeEvent = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('WebSocket close timeout'))
-        }, 10_000)
+      const closeEvent = await new Promise<{ code: number; reason: string }>(
+        (resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('WebSocket close timeout'))
+          }, 10_000)
 
-        ws.on('close', (code: number, reason: Buffer) => {
-          clearTimeout(timeout)
-          resolve({ code, reason: reason.toString() })
-        })
+          ws.on('close', (code: number, reason: Buffer) => {
+            clearTimeout(timeout)
+            resolve({ code, reason: reason.toString() })
+          })
 
-        ws.on('error', () => {
-          // Error is expected, wait for close
-        })
-      })
+          ws.on('error', () => {
+            // Error is expected, wait for close
+          })
+        },
+      )
 
       // Should close with code 4008 (Tunnel offline)
       expect(closeEvent.code).toBe(4008)
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 })
 
+/**
+ * Poll /traforo-status until the tunnel reports the expected online state.
+ * Avoids flaky timing-based sleeps after disconnect/connect.
+ */
+async function waitForTunnelStatus(
+  statusUrl: string,
+  expectedOnline: boolean,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(statusUrl)
+    const data = (await res.json()) as { online: boolean }
+    if (data.online === expectedOnline) {
+      return
+    }
+    await new Promise((r) => setTimeout(r, 300))
+  }
+  throw new Error(
+    `Timed out waiting for tunnel status online=${expectedOnline}`,
+  )
+}
+
 describe('Tunnel Reconnection', () => {
   test(
-    'new upstream connection replaces old one',
+    'can reconnect to tunnel ID after disconnecting',
     async () => {
       const reconnectTunnelId = getTunnelId()
       const localPort = 29876 + Math.floor(Math.random() * 1000)
       const serverUrl = `wss://${reconnectTunnelId}-tunnel-preview.traforo.dev`
+      const statusUrl = `https://${reconnectTunnelId}-tunnel-preview.traforo.dev/traforo-status`
 
-      // Start a local server
       const testServer = await createTestServer(localPort)
 
       // Create first tunnel client
@@ -1044,14 +1393,15 @@ describe('Tunnel Reconnection', () => {
       })
 
       await client1.connect()
+      await waitForTunnelStatus(statusUrl, true)
 
-      // Verify tunnel is online
-      const statusUrl = `https://${reconnectTunnelId}-tunnel-preview.traforo.dev/traforo-status`
-      const status1 = await fetch(statusUrl)
-      const data1 = (await status1.json()) as { online: boolean }
-      expect(data1.online).toBe(true)
+      // Close first client (simulates a restart)
+      client1.close()
 
-      // Create second tunnel client (should replace first)
+      // Poll until the DO processes the disconnect
+      await waitForTunnelStatus(statusUrl, false)
+
+      // Create second tunnel client — should succeed now
       const client2 = new TunnelClient({
         localPort,
         tunnelId: reconnectTunnelId,
@@ -1060,28 +1410,63 @@ describe('Tunnel Reconnection', () => {
       })
 
       await client2.connect()
+      await waitForTunnelStatus(statusUrl, true)
 
-      // Wait for replacement to complete
-      await new Promise((r) => {
-        setTimeout(r, 500)
-      })
-
-      // Tunnel should still be online
-      const status2 = await fetch(statusUrl)
-      const data2 = (await status2.json()) as { online: boolean }
-      expect(data2.online).toBe(true)
-
-      // HTTP request should work through new client
+      // HTTP request should work through the reconnected client
       const tunnelUrl = `https://${reconnectTunnelId}-tunnel-preview.traforo.dev`
       const res = await fetch(`${tunnelUrl}/json`)
       expect(res.status).toBe(200)
 
-      // Clean up
-      client1.close()
       client2.close()
       await testServer.close()
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
+  )
+})
+
+describe('Tunnel Security', () => {
+  test(
+    'rejects second upstream while first is still connected (prevents subdomain hijacking)',
+    async () => {
+      const stableTunnelId = getTunnelId()
+      const localPort = 39876 + Math.floor(Math.random() * 1000)
+      const serverUrl = `wss://${stableTunnelId}-tunnel-preview.traforo.dev`
+
+      const testServer = await createTestServer(localPort)
+
+      // First client claims the tunnel
+      const ownerClient = new TunnelClient({
+        localPort,
+        tunnelId: stableTunnelId,
+        serverUrl,
+        autoReconnect: false,
+      })
+      await ownerClient.connect()
+
+      // Second client tries to steal the subdomain — must be rejected
+      const attackerClient = new TunnelClient({
+        localPort,
+        tunnelId: stableTunnelId,
+        serverUrl,
+        autoReconnect: false,
+      })
+
+      await expect(attackerClient.connect()).rejects.toThrow(/already in use/)
+
+      // Owner's tunnel should still be online and serving traffic
+      const statusUrl = `https://${stableTunnelId}-tunnel-preview.traforo.dev/traforo-status`
+      const statusRes = await fetch(statusUrl)
+      const statusData = (await statusRes.json()) as { online: boolean }
+      expect(statusData.online).toBe(true)
+
+      const tunnelUrl = `https://${stableTunnelId}-tunnel-preview.traforo.dev`
+      const res = await fetch(`${tunnelUrl}/json`)
+      expect(res.status).toBe(200)
+
+      ownerClient.close()
+      await testServer.close()
+    },
+    TEST_TIMEOUT,
   )
 })
 
@@ -1160,7 +1545,7 @@ describe('Vite HMR through tunnel', () => {
       expect(body).toContain('<div id="app">')
       expect(body).toContain('counter.ts')
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -1173,7 +1558,7 @@ describe('Vite HMR through tunnel', () => {
       const body = await res.text()
       expect(body).toContain('count is 0')
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -1200,38 +1585,57 @@ describe('Vite HMR through tunnel', () => {
       })
 
       // Wait for Vite's "connected" message
-      const connectedMsg = await new Promise<string>((resolve, reject) => {
+      const connectedMsg = await new Promise<{
+        payload: string
+        isBinary: boolean
+      }>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('Vite connected message timeout'))
         }, 10_000)
 
-        ws.on('message', function onMsg(data: WebSocket.RawData) {
+        ws.on('message', function onMsg(
+          data: WebSocket.RawData,
+          isBinary: boolean,
+        ) {
           const msg = JSON.parse(data.toString())
           if (msg.type === 'connected') {
             ws.removeListener('message', onMsg)
             clearTimeout(timeout)
-            resolve(data.toString())
+            resolve({
+              payload: data.toString(),
+              isBinary,
+            })
           }
         })
       })
 
-      const parsed = JSON.parse(connectedMsg) as { type: string }
+      const parsed = JSON.parse(connectedMsg.payload) as { type: string }
       expect(parsed.type).toBe('connected')
+      expect(connectedMsg.isBinary).toBe(false)
 
       // Set up listener for HMR message before modifying file.
       // Vite sends "update" for modules with import.meta.hot.accept(),
       // or "full-reload" for modules without it. Both prove the tunnel works.
-      const hmrPromise = new Promise<string>((resolve, reject) => {
+      const hmrPromise = new Promise<{
+        payload: string
+        isBinary: boolean
+      }>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('HMR message timeout'))
         }, 15_000)
 
-        ws.on('message', function onHmr(data: WebSocket.RawData) {
+        ws.on('message', function onHmr(
+          data: WebSocket.RawData,
+          isBinary: boolean,
+        ) {
           const msg = JSON.parse(data.toString())
           if (msg.type === 'update' || msg.type === 'full-reload') {
             ws.removeListener('message', onHmr)
             clearTimeout(timeout)
-            resolve(data.toString())
+            resolve({
+              payload: data.toString(),
+              isBinary,
+            })
           }
         })
       })
@@ -1250,21 +1654,22 @@ describe('Vite HMR through tunnel', () => {
       const original = fs.readFileSync(counterFile, 'utf-8')
       fs.writeFileSync(
         counterFile,
-        original.replace('count is 0', 'count is 1')
+        original.replace('count is 0', 'count is 1'),
       )
 
       // Wait for HMR message through the tunnel
       const hmrMsg = await hmrPromise
-      const hmrParsed = JSON.parse(hmrMsg) as {
+      const hmrParsed = JSON.parse(hmrMsg.payload) as {
         type: string
         path?: string
         updates?: Array<{ path: string }>
       }
       expect(['update', 'full-reload']).toContain(hmrParsed.type)
+      expect(hmrMsg.isBinary).toBe(false)
 
       ws.close()
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 
   test(
@@ -1277,6 +1682,6 @@ describe('Vite HMR through tunnel', () => {
       const body = await res.text()
       expect(body).toContain('count is 1')
     },
-    TEST_TIMEOUT
+    TEST_TIMEOUT,
   )
 })

@@ -10,6 +10,16 @@
       }
     ]
   },
+  "ratelimits": [
+    {
+      "name": "TUNNEL_RATE_LIMITER",
+      "namespace_id": "42303",
+      "simple": {
+        "limit": 1000,
+        "period": 60
+      }
+    }
+  ],
   "migrations": [
     {
       "tag": "v1",
@@ -20,6 +30,10 @@
     {
       "pattern": "*-tunnel.traforo.dev/*",
       "zone_name": "traforo.dev"
+    },
+    {
+      "pattern": "*-tunnel.kimaki.dev/*",
+      "zone_name": "kimaki.dev"
     },
     {
       "pattern": "*-tunnel.kimaki.xyz/*",
@@ -36,10 +50,24 @@
           }
         ]
       },
+      "ratelimits": [
+        {
+          "name": "TUNNEL_RATE_LIMITER",
+          "namespace_id": "42304",
+          "simple": {
+            "limit": 10000,
+            "period": 60
+          }
+        }
+      ],
       "routes": [
         {
           "pattern": "*-tunnel-preview.traforo.dev/*",
           "zone_name": "traforo.dev"
+        },
+        {
+          "pattern": "*-tunnel-preview.kimaki.dev/*",
+          "zone_name": "kimaki.dev"
         },
         {
           "pattern": "*-tunnel-preview.kimaki.xyz/*",

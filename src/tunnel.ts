@@ -1,4 +1,13 @@
 import dedent from 'string-dedent'
+import {
+  evaluateCloudflareCacheability,
+  getRequestCacheBypassReason,
+} from './cache-policy.js'
+import {
+  getActiveUpstream,
+  isStaleUpstream,
+  sendUpstreamMessage,
+} from './upstream-state.js'
 import type {
   UpstreamMessage,
   DownstreamMessage,
@@ -20,17 +29,35 @@ import type {
 // Cloudflare-specific types
 export type Env = {
   TUNNEL_DO: DurableObjectNamespace
+  TUNNEL_RATE_LIMITER: RateLimit
 }
 
 type Attachment = {
   role: 'upstream' | 'downstream'
   tunnelId: string
+  /** Newer upstream sockets win if an older one lingers during disconnect races. */
+  connectedAt?: number
+  /** Password stored on upstream attachment, survives DO hibernation */
+  password?: string
+  /** Edge cache partition key, survives DO hibernation */
+  cacheKey?: string
+}
+
+type CacheContext = {
+  tunnelId: string
+  cacheKey: string
 }
 
 type PendingHttpRequest = {
   resolve: (response: Response) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
+  /** Original request URL for cache storage (only set when caching is enabled) */
+  cacheRequest?: Request
+  /** Immutable cache context captured at request time (avoids race if key changes mid-flight) */
+  cacheContext?: CacheContext
+  /** Request-side directive that forced cache lookup bypass */
+  cacheLookupBypassReason?: string
 }
 
 type StreamingHttpRequest = {
@@ -47,43 +74,104 @@ type PendingWsConnection = {
 
 const HTTP_TIMEOUT_MS = 30_000
 const WS_OPEN_TIMEOUT_MS = 10_000
+const RATE_LIMIT_PERIOD_SECONDS = 60
+
+export function appendQueryParamPreservingFormatting(
+  url: string,
+  key: string,
+  value: string,
+): string {
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+}
+
+export function removeQueryParamPreservingFormatting(
+  url: string,
+  key: string,
+): string {
+  const queryIndex = url.indexOf('?')
+  if (queryIndex === -1) {
+    return url
+  }
+
+  const hashIndex = url.indexOf('#', queryIndex)
+  const base = url.slice(0, queryIndex)
+  const hash = hashIndex === -1 ? '' : url.slice(hashIndex)
+  const query = url.slice(queryIndex + 1, hashIndex === -1 ? undefined : hashIndex)
+  const filteredParams = query.split('&').filter((param) => {
+    const paramName = param.split('=', 1)[0] || ''
+    return paramName !== key && decodeURIComponent(paramName) !== key
+  })
+
+  if (filteredParams.length === 0) {
+    return `${base}${hash}`
+  }
+
+  return `${base}?${filteredParams.join('&')}${hash}`
+}
 
 // Worker entrypoint
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    const url = new URL(req.url)
-    const host = url.hostname
-    const isUpgrade = req.headers.get('Upgrade') === 'websocket'
+    try {
+      const url = new URL(req.url)
+      const host = url.hostname
+      const isUpgrade = req.headers.get('Upgrade') === 'websocket'
 
-    console.log(
-      `[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`,
-    )
+      const rateLimitKey = getRateLimitKey(req)
+      const rateLimitOutcome = await env.TUNNEL_RATE_LIMITER.limit({
+        key: rateLimitKey,
+      })
+      if (!rateLimitOutcome.success) {
+        return new Response('Too Many Requests', {
+          status: 429,
+          headers: {
+            'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS),
+          },
+        })
+      }
 
-    // Extract tunnel ID from subdomain: {tunnelId}-tunnel.kimaki.xyz
-    const tunnelId = extractTunnelId(host)
-    if (!tunnelId) {
-      console.log(`[Worker] Invalid tunnel URL: ${host}`)
-      return new Response('Invalid tunnel URL', { status: 400 })
+      console.log(
+        `[Worker] ${req.method} ${url.pathname} host=${host} upgrade=${isUpgrade}`,
+      )
+
+      // Extract tunnel ID from subdomain: {tunnelId}-tunnel.kimaki.dev
+      const tunnelId = extractTunnelId(host)
+      if (!tunnelId) {
+        console.log(`[Worker] Invalid tunnel URL: ${host}`)
+        return new Response('Invalid tunnel URL', { status: 400 })
+      }
+
+      console.log(`[Worker] tunnelId=${tunnelId}`)
+
+      // Get the Durable Object for this tunnel
+      const doId = env.TUNNEL_DO.idFromName(tunnelId)
+      const stub = env.TUNNEL_DO.get(doId)
+
+      // Forward request to DO
+      const doUrl = appendQueryParamPreservingFormatting(
+        req.url,
+        '_tunnelId',
+        tunnelId,
+      )
+      const res = await stub.fetch(new Request(doUrl, req))
+
+      console.log(`[Worker] DO response status=${res.status}`)
+      return res
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      console.error(`[Worker] Unhandled error: ${error.message}`)
+      console.error(`[Worker] Stack: ${error.stack}`)
+      return new Response(`Worker error: ${error.message}\n${error.stack}`, {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      })
     }
-
-    console.log(`[Worker] tunnelId=${tunnelId}`)
-
-    // Get the Durable Object for this tunnel
-    const doId = env.TUNNEL_DO.idFromName(tunnelId)
-    const stub = env.TUNNEL_DO.get(doId)
-
-    // Forward request to DO
-    const doUrl = new URL(req.url)
-    doUrl.searchParams.set('_tunnelId', tunnelId)
-    const res = await stub.fetch(new Request(doUrl.toString(), req))
-
-    console.log(`[Worker] DO response status=${res.status}`)
-    return res
   },
 }
 
 function extractTunnelId(host: string): string | null {
-  // Match: {tunnelId}-tunnel.kimaki.xyz, {tunnelId}-tunnel-preview.kimaki.xyz, or {tunnelId}-tunnel.localhost
+  // Match: {tunnelId}-tunnel.kimaki.dev, {tunnelId}-tunnel-preview.kimaki.dev, or {tunnelId}-tunnel.localhost
   const match = host.match(/^([a-z0-9-]+)-tunnel(?:-preview)?\./)
   if (!match) {
     return null
@@ -98,21 +186,37 @@ export class Tunnel {
   private pendingHttpRequests: Map<string, PendingHttpRequest> = new Map()
   private streamingHttpRequests: Map<string, StreamingHttpRequest> = new Map()
   private pendingWsConnections: Map<string, PendingWsConnection> = new Map()
+  /** Cache key for edge caching, null when caching is disabled */
+  private cacheKey: string | null = null
+  /** Password for tunnel protection, null when no password is set */
+  private password: string | null = null
 
   constructor(state: DurableObjectState, env: Env) {
     this.ctx = state
     this.env = env
 
-    // Auto-respond to ping messages without waking DO
-    this.ctx.setWebSocketAutoResponse(
-      new WebSocketRequestResponsePair('ping', 'pong'),
-    )
+    // Auto-respond to JSON ping messages without waking the DO.
+    // Only one auto-response pair can be active (second call overrides first).
     this.ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'),
     )
   }
 
   async fetch(req: Request): Promise<Response> {
+    try {
+      return await this._fetch(req)
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      console.error(`[DO] Unhandled error in fetch: ${error.message}`)
+      console.error(`[DO] Stack: ${error.stack}`)
+      return new Response(`DO error: ${error.message}\n${error.stack}`, {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      })
+    }
+  }
+
+  private async _fetch(req: Request): Promise<Response> {
     const url = new URL(req.url)
     const tunnelId = url.searchParams.get('_tunnelId') || 'default'
     const isUpgrade = req.headers.get('Upgrade') === 'websocket'
@@ -124,13 +228,34 @@ export class Tunnel {
     // WebSocket upgrade requests
     if (isUpgrade) {
       if (url.pathname === '/traforo-upstream') {
+        // Parse params but do NOT mutate class fields yet — the connection
+        // may be rejected if an upstream is already connected. Mutating
+        // before the check would let a rejected attacker disable password
+        // protection or caching on the live tunnel.
+        const cacheKey = url.searchParams.get('_cacheKey') || null
+        const password = url.searchParams.get('_password') || null
         console.log(`[DO] Handling upstream connection for ${tunnelId}`)
-        return this.handleUpstreamConnection(tunnelId)
+        return this.handleUpstreamConnection(tunnelId, { cacheKey, password })
       }
       // User WebSocket connection to be proxied
-      // Include query params (minus _tunnelId) so tokens like ?token=xxx are forwarded
-      url.searchParams.delete('_tunnelId')
-      const wsPath = url.pathname + url.search
+      // Password check for WebSocket upgrades
+      const wsPassword = this.getPassword(tunnelId)
+      if (wsPassword) {
+        const cookie = parseCookie(req.headers.get('cookie') || '')
+        if (cookie['traforo-password'] !== wsPassword) {
+          // Can't show HTML for WS upgrades, reject with close code
+          const pair = new WebSocketPair()
+          const [client, server] = Object.values(pair)
+          server.accept()
+          server.close(4013, 'Unauthorized: invalid or missing password')
+          return new Response(null, { status: 101, webSocket: client })
+        }
+      }
+      // Preserve raw query formatting for bare flags like ?import&url&inline.
+      const wsUrl = new URL(
+        removeQueryParamPreservingFormatting(req.url, '_tunnelId'),
+      )
+      const wsPath = wsUrl.pathname + wsUrl.search
       console.log(
         `[DO] Handling user WS connection for ${tunnelId} path=${wsPath}`,
       )
@@ -147,32 +272,168 @@ export class Tunnel {
       })
     }
 
+    // Password login endpoint
+    if (url.pathname === '/traforo-login' && req.method === 'POST') {
+      return this.handleLogin(tunnelId, req)
+    }
+
+    // Password protection check for HTTP requests
+    const passwordResponse = this.checkPassword(tunnelId, req)
+    if (passwordResponse) {
+      return passwordResponse
+    }
+
     // HTTP request to be proxied
     console.log(`[DO] HTTP proxy request ${req.method} ${url.pathname}`)
     return this.handleHttpProxy(tunnelId, req)
   }
 
   // ============================================
+  // Password Protection
+  // ============================================
+
+  /**
+   * Check if the request has a valid password cookie.
+   * Returns null if no password is set or cookie is valid.
+   * Returns a 401 Response if unauthorized.
+   */
+  private checkPassword(tunnelId: string, req: Request): Response | null {
+    const password = this.getPassword(tunnelId)
+    if (!password) {
+      return null
+    }
+
+    const cookie = parseCookie(req.headers.get('cookie') || '')
+    if (cookie['traforo-password'] === password) {
+      return null
+    }
+
+    // Determine if this is a browser request
+    const accept = req.headers.get('accept') || ''
+    const isBrowser = accept.includes('text/html')
+
+    if (isBrowser) {
+      return new Response(passwordHtml(), {
+        status: 401,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      })
+    }
+
+    return new Response(
+      'Unauthorized: this tunnel is password protected.\n' +
+        'Pass the password as a cookie:\n\n' +
+        "  curl -b 'traforo-password=YOUR_PASSWORD' URL\n",
+      {
+        status: 401,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      },
+    )
+  }
+
+  /**
+   * Handle POST /traforo-login — validate password and set cookie.
+   */
+  private async handleLogin(tunnelId: string, req: Request): Promise<Response> {
+    const password = this.getPassword(tunnelId)
+    if (!password) {
+      return new Response('No password configured', { status: 400 })
+    }
+
+    let submitted: string | File | null = null
+    try {
+      const formData = await req.formData()
+      submitted = formData.get('password')
+    } catch {
+      return new Response(passwordHtml('Invalid form submission'), {
+        status: 400,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      })
+    }
+
+    if (typeof submitted !== 'string' || submitted !== password) {
+      return new Response(passwordHtml('Incorrect password'), {
+        status: 401,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      })
+    }
+
+    // Password correct — set cookie and redirect to /
+    return new Response(null, {
+      status: 303,
+      headers: {
+        Location: '/',
+        'Set-Cookie': `traforo-password=${encodeURIComponent(password)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`,
+      },
+    })
+  }
+
+  // ============================================
   // Upstream (local client) connection
   // ============================================
 
-  private handleUpstreamConnection(tunnelId: string): Response {
-    // Close any existing upstream connection
+  private handleUpstreamConnection(
+    tunnelId: string,
+    params: { cacheKey: string | null; password: string | null },
+  ): Response {
+    // Reject if another upstream is already connected. This prevents a
+    // rogue client from stealing someone else's stable subdomain by
+    // connecting with the same tunnel ID while the original owner is live.
     const existing = this.getUpstream(tunnelId)
     if (existing) {
-      try {
-        existing.close(4009, 'Replaced by new connection')
-      } catch {}
+      console.log(
+        `[DO] Tunnel ${tunnelId}: rejected — upstream already connected`,
+      )
+      const pair = new WebSocketPair()
+      const [client, server] = Object.values(pair)
+      server.accept()
+      server.close(
+        4409,
+        `Tunnel ID "${tunnelId}" is already in use by another client`,
+      )
+      return new Response(null, { status: 101, webSocket: client })
+    }
+
+    // Only apply cache/password state after confirming the connection is
+    // accepted. A rejected upstream must never mutate the live tunnel.
+    this.cacheKey = params.cacheKey
+    this.password = params.password
+    if (this.cacheKey) {
+      console.log(`[DO] Edge caching enabled (key: ${this.cacheKey})`)
+    }
+    if (this.password) {
+      console.log(`[DO] Password protection enabled`)
     }
 
     const pair = new WebSocketPair()
     const [client, server] = Object.values(pair)
+    const connectedAt = Date.now()
 
     this.ctx.acceptWebSocket(server, [`upstream:${tunnelId}`])
     server.serializeAttachment({
       role: 'upstream',
       tunnelId,
+      connectedAt,
+      ...(this.password && { password: this.password }),
+      ...(this.cacheKey && { cacheKey: this.cacheKey }),
     } satisfies Attachment)
+
+    // Send an ACK so the client knows the connection was accepted and can
+    // resolve its connect() promise. Without this, the ws library fires
+    // `open` before the DO has a chance to reject with 4409, making it
+    // impossible for the client to distinguish accepted vs rejected.
+    server.send(JSON.stringify({ type: 'upstream_accepted' }))
 
     // Notify any waiting downstream connections
     const downstreams = this.ctx.getWebSockets(`downstream:${tunnelId}`)
@@ -186,8 +447,106 @@ export class Tunnel {
   }
 
   private getUpstream(tunnelId: string): WebSocket | null {
-    const sockets = this.ctx.getWebSockets(`upstream:${tunnelId}`)
-    return sockets[0] || null
+    return getActiveUpstream(this.ctx.getWebSockets(`upstream:${tunnelId}`), tunnelId)
+  }
+
+  private isStaleUpstreamSocket(tunnelId: string, ws: WebSocket): boolean {
+    return isStaleUpstream(this.ctx.getWebSockets(`upstream:${tunnelId}`), tunnelId, ws)
+  }
+
+  private handleUpstreamDisconnected(tunnelId: string) {
+    console.log(
+      `[DO] Upstream disconnected, pending HTTP requests: ${this.pendingHttpRequests.size}, streaming: ${this.streamingHttpRequests.size}`,
+    )
+
+    const downstreams = this.ctx.getWebSockets(`downstream:${tunnelId}`)
+    for (const down of downstreams) {
+      try {
+        down.send(JSON.stringify({ event: 'upstream_disconnected' }))
+        down.close(1012, 'Upstream disconnected')
+      } catch {}
+    }
+
+    for (const [, pending] of this.pendingHttpRequests) {
+      clearTimeout(pending.timeout)
+      pending.resolve(new Response('Tunnel disconnected', { status: 502 }))
+    }
+    this.pendingHttpRequests.clear()
+
+    for (const [, streaming] of this.streamingHttpRequests) {
+      clearTimeout(streaming.timeout)
+      try {
+        void streaming.writer.close()
+      } catch {}
+    }
+    this.streamingHttpRequests.clear()
+
+    for (const [, pending] of this.pendingWsConnections) {
+      clearTimeout(pending.timeout)
+      try {
+        pending.userWs.close(4011, 'Tunnel disconnected')
+      } catch {}
+    }
+    this.pendingWsConnections.clear()
+  }
+
+  private sendToUpstream(
+    tunnelId: string,
+    upstream: WebSocket,
+    message: UpstreamMessage,
+    context: string,
+  ): boolean {
+    return sendUpstreamMessage({
+      tunnelId,
+      sockets: this.ctx.getWebSockets(`upstream:${tunnelId}`),
+      upstream,
+      message,
+      context,
+      logError: console.error,
+      logInfo: console.log,
+      onDisconnect: () => {
+        this.handleUpstreamDisconnected(tunnelId)
+      },
+    })
+  }
+
+  /**
+   * Get the password, recovering from the upstream WS attachment if the DO
+   * was hibernated and this.password was lost from memory.
+   */
+  private getPassword(tunnelId: string): string | null {
+    if (this.password) {
+      return this.password
+    }
+    // Recover from upstream WebSocket attachment (survives hibernation)
+    const upstream = this.getUpstream(tunnelId)
+    if (upstream) {
+      const attachment = upstream.deserializeAttachment() as Attachment | undefined
+      if (attachment?.password) {
+        this.password = attachment.password
+        return this.password
+      }
+    }
+    return null
+  }
+
+  /**
+   * Get the cache key, recovering from the upstream WS attachment if the DO
+   * was hibernated and this.cacheKey was lost from memory.
+   */
+  private getCacheKey(tunnelId: string): string | null {
+    if (this.cacheKey) {
+      return this.cacheKey
+    }
+    const upstream = this.getUpstream(tunnelId)
+    if (upstream) {
+      const attachment = upstream.deserializeAttachment() as Attachment | undefined
+      if (attachment?.cacheKey) {
+        this.cacheKey = attachment.cacheKey
+        return this.cacheKey
+      }
+    }
+    return null
   }
 
   // ============================================
@@ -198,6 +557,49 @@ export class Tunnel {
     tunnelId: string,
     req: Request,
   ): Promise<Response> {
+    const url = new URL(removeQueryParamPreservingFormatting(req.url, '_tunnelId'))
+
+    // Capture immutable cache context at request time to avoid race conditions
+    // if the upstream reconnects with a different --cache key mid-flight.
+    // getCacheKey() recovers the key from WS attachment after hibernation.
+    const cacheKey = this.getCacheKey(tunnelId)
+    const cacheContext: CacheContext | undefined = cacheKey
+      ? { tunnelId, cacheKey }
+      : undefined
+
+    // Build a clean cache request (without internal params)
+    const cacheRequest =
+      cacheContext && req.method === 'GET'
+        ? new Request(url.toString(), {
+            method: 'GET',
+            headers: req.headers,
+          })
+        : undefined
+
+    const cacheLookupBypassReason = cacheRequest
+      ? getRequestCacheBypassReason(cacheRequest)
+      : null
+
+    // Check edge cache before proxying
+    if (cacheRequest && cacheContext && !cacheLookupBypassReason) {
+      try {
+        const cache = await caches.open(
+          `traforo:${cacheContext.tunnelId}:${cacheContext.cacheKey}`,
+        )
+        const cached = await cache.match(cacheRequest)
+        if (cached) {
+          console.log(`[DO] Cache HIT ${req.method} ${url.pathname}`)
+          const res = new Response(cached.body, cached)
+          res.headers.set('X-Traforo-Cache', 'HIT')
+          return res
+        }
+      } catch (err) {
+        console.error(`[DO] Cache check error:`, err)
+      }
+    } else if (cacheLookupBypassReason) {
+      console.log(`[DO] Cache LOOKUP BYPASS reason=${cacheLookupBypassReason}`)
+    }
+
     const upstream = this.getUpstream(tunnelId)
     if (!upstream) {
       return new Response(offlineHtml(tunnelId), {
@@ -207,9 +609,6 @@ export class Tunnel {
     }
 
     const reqId = crypto.randomUUID()
-    const url = new URL(req.url)
-    // Strip internal _tunnelId param so it doesn't leak to the local server
-    url.searchParams.delete('_tunnelId')
 
     // Read request body
     let body: string | null = null
@@ -239,9 +638,7 @@ export class Tunnel {
       body,
     }
 
-    try {
-      upstream.send(JSON.stringify(message) satisfies string)
-    } catch {
+    if (!this.sendToUpstream(tunnelId, upstream, message, `${tunnelId} reqId=${reqId}`)) {
       return new Response('Failed to send to tunnel', { status: 502 })
     }
 
@@ -253,7 +650,14 @@ export class Tunnel {
         resolve(new Response('Tunnel timeout', { status: 504 }))
       }, HTTP_TIMEOUT_MS)
 
-      this.pendingHttpRequests.set(reqId, { resolve, reject, timeout })
+      this.pendingHttpRequests.set(reqId, {
+        resolve,
+        reject,
+        timeout,
+        cacheRequest,
+        cacheContext,
+        cacheLookupBypassReason: cacheLookupBypassReason || undefined,
+      })
     })
   }
 
@@ -314,9 +718,7 @@ export class Tunnel {
       headers,
     }
 
-    try {
-      upstream.send(JSON.stringify(message) satisfies string)
-    } catch {
+    if (!this.sendToUpstream(tunnelId, upstream, message, `WS ${connId}`)) {
       server.close(4009, 'Failed to contact tunnel')
       return new Response(null, {
         status: 101,
@@ -377,50 +779,48 @@ export class Tunnel {
     _wasClean: boolean,
   ) {
     const attachment = ws.deserializeAttachment() as Attachment | undefined
+    console.log(
+      `[DO] webSocketClose code=${code} reason=${reason} role=${attachment?.role} tunnelId=${attachment?.tunnelId}`,
+    )
     if (!attachment) {
       return
     }
 
     if (attachment.role === 'upstream') {
-      // Upstream disconnected - notify all downstream connections
-      const downstreams = this.ctx.getWebSockets(
-        `downstream:${attachment.tunnelId}`,
-      )
-      for (const down of downstreams) {
-        try {
-          down.send(JSON.stringify({ event: 'upstream_disconnected' }))
-          down.close(1012, 'Upstream disconnected')
-        } catch {}
+      if (this.isStaleUpstreamSocket(attachment.tunnelId, ws)) {
+        console.log(`[DO] Ignoring stale upstream close for ${attachment.tunnelId}`)
+        return
       }
 
-      // Reject all pending HTTP requests
-      for (const [reqId, pending] of this.pendingHttpRequests) {
-        clearTimeout(pending.timeout)
-        pending.resolve(new Response('Tunnel disconnected', { status: 502 }))
+      this.handleUpstreamDisconnected(attachment.tunnelId)
+    } else if (attachment.role === 'downstream') {
+      // Downstream (user) WS closed — forward close to upstream so the
+      // local client can clean up its corresponding localWsConnections entry
+      const tags = this.ctx.getTags(ws)
+      const wsTag = tags.find((t) => t.startsWith('ws:'))
+      if (wsTag) {
+        const connId = wsTag.replace('ws:', '')
+        const upstream = this.getUpstream(attachment.tunnelId)
+        if (upstream) {
+          const closeMsg: WsCloseMessage = {
+            type: 'ws_close',
+            connId,
+            code,
+            reason,
+          }
+          this.sendToUpstream(
+            attachment.tunnelId,
+            upstream,
+            closeMsg,
+            `WS close ${connId}`,
+          )
+        }
       }
-      this.pendingHttpRequests.clear()
-
-      // Close all streaming HTTP requests
-      for (const [reqId, streaming] of this.streamingHttpRequests) {
-        clearTimeout(streaming.timeout)
-        try {
-          streaming.writer.close()
-        } catch {}
-      }
-      this.streamingHttpRequests.clear()
-
-      // Close all pending WS connections
-      for (const [connId, pending] of this.pendingWsConnections) {
-        clearTimeout(pending.timeout)
-        try {
-          pending.userWs.close(4011, 'Tunnel disconnected')
-        } catch {}
-      }
-      this.pendingWsConnections.clear()
     }
   }
 
   async webSocketError(ws: WebSocket, error: unknown) {
+    console.error(`[DO] webSocketError: ${error instanceof Error ? error.message : String(error)}`)
     // Treat errors same as close
     await this.webSocketClose(ws, 1011, 'WebSocket error', false)
   }
@@ -496,9 +896,7 @@ export class Tunnel {
       binary,
     }
 
-    try {
-      upstream.send(JSON.stringify(message) satisfies string)
-    } catch {}
+    this.sendToUpstream(tunnelId, upstream, message, `WS frame ${connId}`)
   }
 
   private handleHttpResponse(msg: HttpResponseMessage) {
@@ -517,7 +915,31 @@ export class Tunnel {
     }
 
     const headers = buildHeaders(msg.headers)
-    pending.resolve(new Response(body, { status: msg.status, headers }))
+    const response = new Response(body, { status: msg.status, headers })
+
+    if (pending.cacheLookupBypassReason) {
+      response.headers.set('X-Traforo-Cache', 'BYPASS')
+      response.headers.set(
+        'X-Traforo-Cache-Reason',
+        pending.cacheLookupBypassReason,
+      )
+      pending.resolve(response)
+      return
+    }
+
+    // Store in edge cache if cacheable (use immutable context from request time)
+    if (pending.cacheRequest && pending.cacheContext) {
+      const cacheResult = this.cacheStore(
+        pending.cacheRequest,
+        response,
+        msg.headers,
+        pending.cacheContext,
+      )
+      response.headers.set('X-Traforo-Cache', cacheResult.stored ? 'MISS' : 'BYPASS')
+      response.headers.set('X-Traforo-Cache-Reason', cacheResult.reason)
+    }
+
+    pending.resolve(response)
   }
 
   private handleHttpResponseStart(msg: HttpResponseStartMessage) {
@@ -530,6 +952,10 @@ export class Tunnel {
     this.pendingHttpRequests.delete(msg.id)
 
     const headers = buildHeaders(msg.headers)
+
+    if (pending.cacheContext) {
+      headers.set('X-Traforo-Cache', 'BYPASS')
+    }
 
     // Create TransformStream for streaming response
     const { readable, writable } = new TransformStream<Uint8Array>()
@@ -555,7 +981,7 @@ export class Tunnel {
 
     try {
       const chunk = base64ToArrayBuffer(msg.chunk)
-      streaming.writer.write(new Uint8Array(chunk))
+      void streaming.writer.write(new Uint8Array(chunk))
     } catch (err) {
       console.error(`[DO] Failed to write chunk: ${err}`)
     }
@@ -571,7 +997,7 @@ export class Tunnel {
     this.streamingHttpRequests.delete(msg.id)
 
     try {
-      streaming.writer.close()
+      void streaming.writer.close()
     } catch {}
   }
 
@@ -626,6 +1052,60 @@ export class Tunnel {
         ws.close(msg.code, msg.reason)
       } catch {}
     }
+  }
+
+  // ============================================
+  // Edge Cache Helpers
+  // ============================================
+
+  /**
+   * Store a response in the edge cache if it's cacheable.
+   * Respects origin Cache-Control headers; adds default caching for static assets.
+   * Uses immutable cache context captured at request time to avoid races.
+   * Returns true if the response was stored, false if it was not cacheable.
+   */
+  private cacheStore(
+    cacheRequest: Request,
+    response: Response,
+    rawHeaders: Record<string, string | string[]>,
+    ctx: CacheContext,
+  ): { stored: boolean; reason: string } {
+    const decision = evaluateCloudflareCacheability({
+      request: cacheRequest,
+      responseStatus: response.status,
+      responseHeaders: response.headers,
+    })
+
+    if (!decision.cacheable) {
+      console.log(`[DO] Cache BYPASS reason=${decision.reason}`)
+      return { stored: false, reason: decision.reason }
+    }
+
+    const pathname = new URL(cacheRequest.url).pathname
+
+    // Build response to cache
+    const responseToCache = new Response(response.clone().body, {
+      status: response.status,
+      headers: buildHeaders(rawHeaders),
+    })
+
+    // Apply deterministic default TTL fallback when policy requested it.
+    if (decision.cacheControlOverride) {
+      responseToCache.headers.set('Cache-Control', decision.cacheControlOverride)
+    }
+
+    responseToCache.headers.set('X-Traforo-Cache', 'STORED')
+
+    console.log(`[DO] Cache STORE ${pathname}`)
+
+    this.ctx.waitUntil(
+      caches
+        .open(`traforo:${ctx.tunnelId}:${ctx.cacheKey}`)
+        .then((cache) => cache.put(cacheRequest, responseToCache))
+        .catch((err) => console.error(`[DO] Cache store error:`, err)),
+    )
+
+    return { stored: true, reason: decision.reason }
   }
 
   private handleWsError(msg: WsErrorMessage) {
@@ -701,7 +1181,165 @@ function isHopByHopHeader(header: string): boolean {
   return HOP_BY_HOP_HEADERS.has(header.toLowerCase())
 }
 
+function getRateLimitKey(req: Request): string {
+  const cfConnectingIp = req.headers.get('CF-Connecting-IP')?.trim()
+  if (cfConnectingIp) {
+    return cfConnectingIp
+  }
+
+  return 'unknown-client'
+}
+
+function parseCookie(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {}
+  for (const pair of cookieHeader.split(';')) {
+    const [name, ...rest] = pair.split('=')
+    const key = name?.trim()
+    if (!key) continue
+    const raw = rest.join('=').trim()
+    try {
+      cookies[key] = decodeURIComponent(raw)
+    } catch {
+      // Malformed cookie value — use raw string instead of throwing
+      cookies[key] = raw
+    }
+  }
+  return cookies
+}
+
 const html = dedent
+function passwordHtml(error?: string): string {
+  const errorBlock = error
+    ? `<p class="error">${error}</p>`
+    : ''
+  const htmlStr = html`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Password Required</title>
+        <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          body {
+            font-family:
+              -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+              'Helvetica Neue', Arial, sans-serif;
+            background: #fff;
+            color: #111;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            line-height: 1.6;
+          }
+          .container {
+            max-width: 380px;
+            width: 100%;
+          }
+          h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.02em;
+          }
+          p {
+            color: #444;
+            margin-bottom: 1.5rem;
+          }
+          .error {
+            color: #dc2626;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+          }
+          form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+          }
+          input[type='password'] {
+            font-family: inherit;
+            font-size: 0.9375rem;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            outline: none;
+            transition: border-color 0.15s;
+          }
+          input[type='password']:focus {
+            border-color: #111;
+          }
+          button {
+            font-family: inherit;
+            font-size: 0.9375rem;
+            font-weight: 500;
+            padding: 0.5rem 0.75rem;
+            background: #111;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+          }
+          button:hover {
+            background: #333;
+          }
+          @media (prefers-color-scheme: dark) {
+            body {
+              background: #111;
+              color: #eee;
+            }
+            p {
+              color: #aaa;
+            }
+            .error {
+              color: #f87171;
+            }
+            input[type='password'] {
+              background: #1a1a1a;
+              border-color: #333;
+              color: #eee;
+            }
+            input[type='password']:focus {
+              border-color: #eee;
+            }
+            button {
+              background: #eee;
+              color: #111;
+            }
+            button:hover {
+              background: #ccc;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Password Required</h1>
+          <p>This tunnel is protected. Enter the password to continue.</p>
+          ${errorBlock}
+          <form method="POST" action="/traforo-login">
+            <input
+              type="password"
+              name="password"
+              placeholder="Password"
+              autofocus
+              required
+            />
+            <button type="submit">Continue</button>
+          </form>
+        </div>
+      </body>
+    </html>
+  `
+  return htmlStr
+}
+
 function offlineHtml(tunnelId: string): string {
   const htmlStr = html`
     <!DOCTYPE html>
@@ -819,15 +1457,15 @@ function offlineHtml(tunnelId: string): string {
             is interrupted.
           </p>
           <div class="section">
-            <div class="section-title">Keep it running with tmux</div>
+            <div class="section-title">Keep it running with tuistory</div>
             <pre><code><span class="comment"># Create a background session</span>
-    tmux new-session -d -s dev
+    bunx tuistory launch "kimaki tunnel --kill -p 3000 -- pnpm dev" -s dev
 
-    <span class="comment"># Start your dev server with tunnel</span>
-    tmux send-keys -t dev "npx kimaki tunnel -p 3000 -- pnpm dev" Enter
+    <span class="comment"># Wait for the server or tunnel output</span>
+    bunx tuistory -s dev wait "/ready|tunnel|http/i" --timeout 30000
 
-    <span class="comment"># View the tunnel URL</span>
-    tmux capture-pane -t dev -p | grep tunnel</code></pre>
+    <span class="comment"># Read the tunnel URL</span>
+    bunx tuistory read -s dev</code></pre>
           </div>
         </div>
       </body>

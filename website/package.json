@@ -1,0 +1,34 @@
+{
+  "name": "traforo-website",
+  "private": true,
+  "sideEffects": false,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "deploy:prod": "pnpm run build && wrangler deploy",
+    "dev": "tuistory -- vite dev",
+    "start": "vite preview",
+    "typecheck": "tsc",
+    "typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/vite-plugin": "1.35.0",
+    "@cloudflare/workers-types": "^4.20250712.0",
+    "@holocron.so/vite": "^0.10.2",
+    "@tailwindcss/vite": "^4.3.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "spiceflow": "1.25.3-rsc.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.8.3",
+    "vite": "^8.0.13",
+    "wrangler": "4.92.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

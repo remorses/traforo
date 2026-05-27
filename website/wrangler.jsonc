@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "traforo-website",
+  "main": "./src/server.tsx",
+  "compatibility_date": "2026-03-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "custom_domain": true,
+      "pattern": "traforo.dev"
+    },
+    {
+      "custom_domain": true,
+      "pattern": "www.traforo.dev"
+    }
+  ],
+}

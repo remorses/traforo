@@ -1,7 +1,7 @@
 {
   "name": "traforo",
-  "version": "0.0.7",
-  "description": "HTTP tunnel via Cloudflare Durable Objects and WebSockets",
+  "version": "0.7.0",
+  "description": "HTTP tunnel via Cloudflare Durable Objects and WebSockets. Edge caching and password protection.",
   "type": "module",
   "license": "MIT",
   "repository": "https://github.com/remorses/traforo",
@@ -31,9 +31,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.client.json && chmod +x dist/cli.js",
     "prepublishOnly": "pnpm build",
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "deploy:preview": "wrangler deploy --env preview",
+    "dev": "wrangler dev -c worker/wrangler.json",
+    "deploy": "wrangler deploy -c worker/wrangler.json --env preview",
+    "deploy:prod": "wrangler deploy -c worker/wrangler.json # only run if user asks specifically!",
     "typecheck": "tsc --noEmit",
     "typecheck:client": "tsc --noEmit -p tsconfig.client.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
@@ -42,16 +42,24 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250712.0",
+    "@types/http-cache-semantics": "^4.2.0",
     "@types/node": "^22.0.0",
+    "@types/proxy-from-env": "^1.0.4",
     "@types/ws": "^8.18.1",
     "tsx": "^4.20.5",
     "typescript": "^5.7.0",
+    "undici-types": "~6.21.0",
     "vite": "^7.1.4",
     "vitest": "^3.2.4",
     "wrangler": "^4.24.3"
   },
   "dependencies": {
-    "goke": "^6.1.2",
+    "goke": "^6.8.0",
+    "http-cache-semantics": "^4.2.0",
+    "https-proxy-agent": "^7.0.6",
+    "proxy-from-env": "^2.1.0",
+    "socks-proxy-agent": "^8.0.5",
+    "std-env": "^4.1.0",
     "string-dedent": "^3.0.2",
     "ws": "^8.19.0"
   }

@@ -2,6 +2,10 @@
  * Local tunnel client - runs on user's machine to expose a local server.
  */
 
+import { HttpsProxyAgent } from 'https-proxy-agent'
+import { getProxyForUrl } from 'proxy-from-env'
+import { SocksProxyAgent } from 'socks-proxy-agent'
+import { isAgent } from 'std-env'
 import WebSocket from 'ws'
 import type {
   UpstreamMessage,
@@ -27,7 +31,7 @@ type TunnelClientOptions = {
   localPort: number
   /** Local host (default: localhost) */
   localHost?: string
-  /** Base domain for tunnel URLs (default: kimaki.xyz) */
+  /** Base domain for tunnel URLs (default: traforo.dev, override with TRAFORO_BASE_DOMAIN env) */
   baseDomain?: string
   /** Tunnel server URL (default: wss://{tunnelId}-tunnel.{baseDomain}) */
   serverUrl?: string
@@ -39,6 +43,52 @@ type TunnelClientOptions = {
   autoReconnect?: boolean
   /** Reconnect delay in ms */
   reconnectDelay?: number
+  /** Enable edge caching with this partition key */
+  cacheKey?: string
+  /** Password to protect the tunnel */
+  password?: string
+  /**
+   * Called when the connection fails with an unrecoverable error (e.g.
+   * code 4409 — tunnel ID already in use). The client sets `closed = true`
+   * and will not attempt to reconnect before calling this callback.
+   */
+  onFatalError?: (error: Error) => void
+}
+
+/**
+ * Interval (ms) between keepalive pings sent to the DO.
+ * Cloudflare's CDN has a ~100s inactivity timeout on WebSockets.
+ * The DO's setWebSocketAutoResponse handles these at the edge without
+ * waking the DO from hibernation, so this is zero-cost.
+ */
+const PING_INTERVAL_MS = 30_000
+
+export function createWebSocketAgentFromEnv({
+  wsUrl,
+}: {
+  wsUrl: string
+}): HttpsProxyAgent<string> | SocksProxyAgent | undefined {
+  const httpLikeUrl = (() => {
+    const parsedUrl = new URL(wsUrl)
+    if (parsedUrl.protocol === 'ws:') {
+      parsedUrl.protocol = 'http:'
+    }
+    if (parsedUrl.protocol === 'wss:') {
+      parsedUrl.protocol = 'https:'
+    }
+    return parsedUrl.toString()
+  })()
+
+  const proxyUrl = getProxyForUrl(wsUrl) || getProxyForUrl(httpLikeUrl)
+  if (!proxyUrl) {
+    return undefined
+  }
+
+  if (proxyUrl.startsWith('socks')) {
+    return new SocksProxyAgent(proxyUrl)
+  }
+
+  return new HttpsProxyAgent(proxyUrl)
 }
 
 export class TunnelClient {
@@ -46,9 +96,11 @@ export class TunnelClient {
   private ws: WebSocket | null = null
   private localWsConnections: Map<string, WebSocket> = new Map()
   private closed = false
+  private pingInterval: ReturnType<typeof setInterval> | null = null
 
   constructor(options: TunnelClientOptions) {
-    const baseDomain = options.baseDomain || 'traforo.dev'
+    const baseDomain =
+      options.baseDomain || process.env.TRAFORO_BASE_DOMAIN || 'traforo.dev'
     this.options = {
       localHost: 'localhost',
       baseDomain,
@@ -56,8 +108,10 @@ export class TunnelClient {
       localHttps: false,
       autoReconnect: true,
       reconnectDelay: 3000,
+      cacheKey: undefined,
+      onFatalError: undefined,
       ...options,
-    }
+    } as Required<TunnelClientOptions>
   }
 
   get url(): string {
@@ -69,24 +123,54 @@ export class TunnelClient {
       throw new Error('Client is closed')
     }
 
-    const wsUrl = `${this.options.serverUrl}/traforo-upstream?_tunnelId=${this.options.tunnelId}`
+    let wsUrl = `${this.options.serverUrl}/traforo-upstream?_tunnelId=${this.options.tunnelId}`
+    if (this.options.cacheKey) {
+      wsUrl += `&_cacheKey=${encodeURIComponent(this.options.cacheKey)}`
+    }
+    if (this.options.password) {
+      wsUrl += `&_password=${encodeURIComponent(this.options.password)}`
+    }
     // console.log(`Connecting to ${wsUrl}...`)
 
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(wsUrl)
+      // The DO sends { type: 'upstream_accepted' } after accepting the
+      // upstream. We only resolve connect() when we see that message.
+      // If the DO rejects (close 4409 before ACK), we reject the promise.
+      let accepted = false
+
+      // Safety timeout so connect() doesn't hang forever if the deployed
+      // worker is out of date and doesn't send the ACK.
+      const ackTimeout = setTimeout(() => {
+        if (!accepted) {
+          try {
+            this.ws?.close()
+          } catch {}
+          reject(new Error('Timed out waiting for tunnel acceptance'))
+        }
+      }, 10_000)
+
+      this.ws = new WebSocket(wsUrl, {
+        agent: createWebSocketAgentFromEnv({ wsUrl }),
+      })
 
       this.ws.on('open', () => {
-        console.log(`Connected with Traforo! Tunnel URL: ${this.url}`)
-        resolve()
+        // WebSocket is open but the DO might still reject us with 4409.
+        // Wait for the upstream_accepted ACK before resolving.
       })
 
       this.ws.on('error', (err: Error) => {
         console.error('WebSocket error:', err.message)
-        reject(new Error('WebSocket connection failed'))
+        if (!accepted) {
+          clearTimeout(ackTimeout)
+          reject(new Error('WebSocket connection failed'))
+        }
       })
 
       this.ws.on('close', (code: number, reason: Buffer) => {
-        console.log(`Disconnected: ${code} ${reason.toString()}`)
+        const reasonStr = reason.toString()
+        console.log(`Disconnected: ${code} ${reasonStr}`)
+        clearTimeout(ackTimeout)
+        this.stopPingInterval()
         this.ws = null
 
         // Close all local WS connections
@@ -96,6 +180,21 @@ export class TunnelClient {
           } catch {}
         }
         this.localWsConnections.clear()
+
+        // 4409 — tunnel ID is already in use. Do not reconnect.
+        if (code === 4409) {
+          this.closed = true
+          const err = new Error(
+            reasonStr ||
+              `Tunnel ID "${this.options.tunnelId}" is already in use by another client`,
+          )
+          if (!accepted) {
+            reject(err)
+          } else {
+            this.options.onFatalError?.(err)
+          }
+          return
+        }
 
         // Auto-reconnect
         if (this.options.autoReconnect && !this.closed) {
@@ -107,13 +206,41 @@ export class TunnelClient {
       })
 
       this.ws.on('message', (data: WebSocket.RawData) => {
-        this.handleMessage(data.toString())
+        const raw = data.toString()
+
+        // Handle the upstream_accepted ACK — resolve connect() and start
+        // processing normal tunnel messages from here on.
+        if (!accepted) {
+          try {
+            const msg = JSON.parse(raw) as { type?: string }
+            if (msg.type === 'upstream_accepted') {
+              accepted = true
+              clearTimeout(ackTimeout)
+              const { localHost, localPort, localHttps } = this.options
+              const localProtocol = localHttps ? 'https' : 'http'
+              const localUrl = `${localProtocol}://${localHost}:${localPort}`
+              let message = `Connected with Traforo!\n${this.url}`
+              if (isAgent) {
+                message += `\n\nUse ${localUrl} directly for lower latency. The tunnel URL is for remote access. Show both URLs to the user.`
+              }
+              console.log(message)
+              this.startPingInterval()
+              resolve()
+              return
+            }
+          } catch {
+            // Not JSON — fall through to handleMessage
+          }
+        }
+
+        this.handleMessage(raw)
       })
     })
   }
 
   close(): void {
     this.closed = true
+    this.stopPingInterval()
     if (this.ws) {
       this.ws.close()
       this.ws = null
@@ -124,6 +251,28 @@ export class TunnelClient {
       } catch {}
     }
     this.localWsConnections.clear()
+  }
+
+  private startPingInterval(): void {
+    this.stopPingInterval()
+    this.pingInterval = setInterval(() => {
+      const ws = this.ws
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return
+      }
+      try {
+        ws.send('{"type":"ping"}')
+      } catch {
+        // readyState can flip between check and send(); safe to ignore
+      }
+    }, PING_INTERVAL_MS)
+  }
+
+  private stopPingInterval(): void {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval)
+      this.pingInterval = null
+    }
   }
 
   private handleMessage(rawMessage: string): void {
@@ -163,6 +312,17 @@ export class TunnelClient {
       let body: Buffer | undefined
       if (msg.body) {
         body = Buffer.from(msg.body, 'base64')
+      }
+
+      // Inject standard reverse-proxy headers so the local server knows the
+      // original public hostname and protocol (used by BetterAuth, Next.js,
+      // Express trust-proxy, etc. for correct redirect URLs).
+      const tunnelUrl = new URL(this.url)
+      if (!msg.headers['x-forwarded-host']) {
+        msg.headers['x-forwarded-host'] = tunnelUrl.host
+      }
+      if (!msg.headers['x-forwarded-proto']) {
+        msg.headers['x-forwarded-proto'] = tunnelUrl.protocol.replace(':', '')
       }
 
       // Make local request
@@ -273,7 +433,9 @@ export class TunnelClient {
       ? subprotocol.split(',').map((p) => p.trim())
       : undefined
 
-    console.log(`WS OPEN ${msg.path} (${msg.connId})${protocols ? ` protocols=${protocols}` : ''}`)
+    console.log(
+      `WS OPEN ${msg.path} (${msg.connId})${protocols ? ` protocols=${protocols}` : ''}`,
+    )
 
     try {
       const localWs = new WebSocket(url, protocols)
@@ -317,23 +479,16 @@ export class TunnelClient {
       })
 
       localWs.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
-        let frameData: string
-        let binary = false
-
-        if (isBinary || data instanceof Buffer) {
-          frameData = Buffer.isBuffer(data)
-            ? data.toString('base64')
-            : Buffer.from(data as ArrayBuffer).toString('base64')
-          binary = true
-        } else {
-          frameData = data.toString()
-        }
+        const dataBuffer = rawDataToBuffer(data)
+        const frameData = isBinary
+          ? dataBuffer.toString('base64')
+          : dataBuffer.toString('utf8')
 
         const frame: WsFrameResponseMessage = {
           type: 'ws_frame',
           connId: msg.connId,
           data: frameData,
-          binary,
+          binary: isBinary,
         }
         this.send(frame)
       })
@@ -391,4 +546,16 @@ export class TunnelClient {
 
     this.ws.send(JSON.stringify(msg))
   }
+}
+
+function rawDataToBuffer(data: WebSocket.RawData): Buffer {
+  if (Buffer.isBuffer(data)) {
+    return data
+  }
+
+  if (Array.isArray(data)) {
+    return Buffer.concat(data.map((chunk) => rawDataToBuffer(chunk)))
+  }
+
+  return Buffer.from(data)
 }
