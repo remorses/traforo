@@ -313,6 +313,99 @@ const client = new TunnelClient({
 await client.connect()
 ```
 
+## Self-Hosting
+
+You can deploy your own traforo instance on Cloudflare. The worker uses **Durable Objects** for WebSocket coordination, so you need a Cloudflare account with the Workers Paid plan.
+
+### Prerequisites
+
+- A **Cloudflare account** with Workers Paid plan (Durable Objects require it)
+- A **domain** added to Cloudflare DNS (e.g. `example.com`)
+- **Node.js** 18+ and **pnpm** installed
+- **wrangler** CLI: `npm install -g wrangler`
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/remorses/traforo.git
+cd traforo
+pnpm install
+```
+
+### 2. Configure your domain
+
+Edit `worker/wrangler.json` and replace the routes with your domain:
+
+```json
+{
+  "routes": [
+    {
+      "pattern": "*-tunnel.example.com/*",
+      "zone_name": "example.com"
+    }
+  ]
+}
+```
+
+### 3. Add a wildcard DNS record
+
+In the Cloudflare dashboard for your domain, add a **wildcard CNAME** record:
+
+```
+Type:    CNAME
+Name:    *-tunnel
+Target:  example.com
+Proxy:   Proxied (orange cloud)
+```
+
+This routes all `{id}-tunnel.example.com` subdomains through Cloudflare to your worker.
+
+### 4. Deploy the worker
+
+```bash
+wrangler deploy -c worker/wrangler.json
+```
+
+### 5. Use the CLI with your domain
+
+Set the `TRAFORO_BASE_DOMAIN` environment variable to point the CLI at your instance:
+
+```bash
+export TRAFORO_BASE_DOMAIN=example.com
+
+traforo -p 3000
+# Tunnel: https://{id}-tunnel.example.com
+```
+
+Add it to your shell profile (`~/.zshrc`, `~/.bashrc`) to make it permanent:
+
+```bash
+echo 'export TRAFORO_BASE_DOMAIN=example.com' >> ~/.zshrc
+```
+
+Or pass it inline for one-off usage:
+
+```bash
+TRAFORO_BASE_DOMAIN=example.com traforo -- pnpm dev
+```
+
+### Library usage with custom domain
+
+When using the Node.js API, pass `baseDomain` directly or rely on the env variable:
+
+```ts
+import { TunnelClient } from 'traforo/client'
+
+const client = new TunnelClient({
+  localPort: 3000,
+  tunnelId: 'my-app',
+  baseDomain: 'example.com', // or set TRAFORO_BASE_DOMAIN
+})
+
+await client.connect()
+// https://my-app-tunnel.example.com
+```
+
 ## License
 
 MIT

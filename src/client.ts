@@ -31,7 +31,7 @@ type TunnelClientOptions = {
   localPort: number
   /** Local host (default: localhost) */
   localHost?: string
-  /** Base domain for tunnel URLs (default: kimaki.dev) */
+  /** Base domain for tunnel URLs (default: traforo.dev, override with TRAFORO_BASE_DOMAIN env) */
   baseDomain?: string
   /** Tunnel server URL (default: wss://{tunnelId}-tunnel.{baseDomain}) */
   serverUrl?: string
@@ -99,7 +99,8 @@ export class TunnelClient {
   private pingInterval: ReturnType<typeof setInterval> | null = null
 
   constructor(options: TunnelClientOptions) {
-    const baseDomain = options.baseDomain || 'traforo.dev'
+    const baseDomain =
+      options.baseDomain || process.env.TRAFORO_BASE_DOMAIN || 'traforo.dev'
     this.options = {
       localHost: 'localhost',
       baseDomain,

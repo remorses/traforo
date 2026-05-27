@@ -440,7 +440,8 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   }
 
   // Compute tunnel URL early so it can be injected into the child env
-  const baseDomain = options.baseDomain || 'traforo.dev'
+  const baseDomain =
+    options.baseDomain || process.env.TRAFORO_BASE_DOMAIN || 'traforo.dev'
   const tunnelUrl = `https://${tunnelId}-tunnel.${baseDomain}`
 
   // If command provided, spawn child process with PORT env
