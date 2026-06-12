@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+1. **Fixed port detection failing when dev servers use ANSI colors** — Vite and other dev servers embed ANSI escape codes inside URLs when `FORCE_COLOR=1` is set (which traforo injects). For example, Vite outputs color codes between `localhost:` and the port number, splitting the string so the port regex never matches and detection times out. Port output is now stripped of all ANSI escape sequences before running the port regex.
+
 ## 0.7.0
 
 1. **Self-hosting support via `TRAFORO_BASE_DOMAIN`** — deploy your own traforo instance on Cloudflare and point the CLI at it with a single env variable:
