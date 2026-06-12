@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { stripVTControlCharacters } from 'node:util'
 import { exec, spawn, type ChildProcess } from 'node:child_process'
 // NOTE: We intentionally use spawn (not spawnSync) for child processes and
 // forward SIGINT/SIGTERM/SIGHUP to the child, waiting for it to exit before
@@ -79,11 +80,11 @@ const IGNORED_LINE_PATTERNS = [
 // don't break regex matching. Dev servers like Vite embed ANSI codes
 // inside URLs (e.g. coloring the port number separately), which splits
 // the URL string and prevents the port regex from matching.
-// eslint-disable-next-line no-control-regex
-const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07/g
-
+// Uses Node's built-in stripVTControlCharacters which handles all
+// terminal escape forms: SGR, private CSI, OSC hyperlinks, charset
+// designate sequences, and C1 control codes.
 export function stripAnsi(text: string): string {
-  return text.replace(ANSI_ESCAPE_RE, '')
+  return stripVTControlCharacters(text)
 }
 
 export function detectPortFromText(text: string): number | null {

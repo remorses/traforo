@@ -177,6 +177,13 @@ describe('run-tunnel security defaults', () => {
     expect(stripAnsi('\x1b[32mhello\x1b[0m')).toBe('hello')
     expect(stripAnsi('\x1b[1m\x1b[36mhttp://localhost:\x1b[22m3000\x1b[39m/')).toBe('http://localhost:3000/')
     expect(stripAnsi('no escapes here')).toBe('no escapes here')
+    // Private CSI params (cursor hide/show)
+    expect(stripAnsi('\x1b[?25lhttp://localhost:3000\x1b[?25h')).toBe('http://localhost:3000')
+  })
+
+  test('detects port through private CSI escape codes', () => {
+    const output = '\x1b[?25l  Local: http://localhost:4000/\x1b[?25h'
+    expect(detectPortFromText(output)).toBe(4000)
   })
 })
 
