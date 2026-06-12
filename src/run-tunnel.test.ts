@@ -8,6 +8,7 @@ import {
   createRandomTunnelId,
   detectPortFromText,
   parseCommandFromArgv,
+  stripAnsi,
 } from './run-tunnel.js'
 import {
   writeLockfile,
@@ -144,6 +145,38 @@ describe('run-tunnel security defaults', () => {
       '  ➜  Local:   http://localhost:5176/',
     ].join('\n')
     expect(detectPortFromText(viteOutput)).toBe(5176)
+  })
+
+  test('detects port from Vite output with ANSI color codes', () => {
+    // Vite wraps parts of the URL in ANSI color codes, splitting the URL
+    // string so the regex can't match without stripping ANSI first.
+    // This is the actual output from `FORCE_COLOR=1 vite dev`:
+    const viteAnsiOutput = [
+      'Port 5173 is in use, trying another one...',
+      'Port 5174 is in use, trying another one...',
+      'Port 5175 is in use, trying another one...',
+      'Port 5176 is in use, trying another one...',
+      '',
+      '  \x1b[32m\x1b[1mVITE\x1b[22m v8.0.13\x1b[39m  ready in 2646 ms',
+      '',
+      '  \x1b[32m➜\x1b[39m  \x1b[1mLocal:\x1b[22m   \x1b[36mhttp://localhost:\x1b[1m5177\x1b[22m/\x1b[39m',
+      '  \x1b[2m➜\x1b[22m  \x1b[2mNetwork: use \x1b[22m\x1b[2m--host\x1b[22m\x1b[2m to expose\x1b[22m',
+    ].join('\n')
+    expect(detectPortFromText(viteAnsiOutput)).toBe(5177)
+  })
+
+  test('detects port from Next.js output with ANSI color codes', () => {
+    const nextAnsiOutput = [
+      '\x1b[36m  ▲ Next.js 15.2.0\x1b[39m',
+      '\x1b[36m  - Local:\x1b[39m        \x1b[36mhttp://localhost:\x1b[1m3000\x1b[22m\x1b[39m',
+    ].join('\n')
+    expect(detectPortFromText(nextAnsiOutput)).toBe(3000)
+  })
+
+  test('stripAnsi removes all ANSI escape sequences', () => {
+    expect(stripAnsi('\x1b[32mhello\x1b[0m')).toBe('hello')
+    expect(stripAnsi('\x1b[1m\x1b[36mhttp://localhost:\x1b[22m3000\x1b[39m/')).toBe('http://localhost:3000/')
+    expect(stripAnsi('no escapes here')).toBe('no escapes here')
   })
 })
 

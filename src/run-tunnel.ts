@@ -75,9 +75,23 @@ const IGNORED_LINE_PATTERNS = [
   /\bdevtools listening\b/i,
 ]
 
+// Strip ANSI escape sequences (colors, cursor movement, etc.) so they
+// don't break regex matching. Dev servers like Vite embed ANSI codes
+// inside URLs (e.g. coloring the port number separately), which splits
+// the URL string and prevents the port regex from matching.
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07/g
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, '')
+}
+
 export function detectPortFromText(text: string): number | null {
+  // Strip ANSI escape codes first — dev servers like Vite embed color
+  // codes inside URLs which breaks the port regex.
+  const clean = stripAnsi(text)
   // Process line by line so we can skip noisy lines before pattern-matching.
-  const lines = text.split('\n')
+  const lines = clean.split('\n')
   for (const line of lines) {
     if (IGNORED_LINE_PATTERNS.some((p) => p.test(line))) continue
     const match = line.match(LOCAL_PORT_PATTERN)
