@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.2
+
+1. **Better error messages with recovery hints** — all timeout and connection errors now include actionable suggestions instead of generic messages:
+   - Port detection timeout shows elapsed seconds and suggests `traforo -p <port> -- <command>`
+   - Tunnel acceptance timeout explains the worker may be unresponsive
+   - Tunnel ID conflict suggests `--tunnel-id` or omitting `-t` for a random ID
+   - Connection failure clarifies it's the tunnel server and suggests checking internet
+2. **Reduced port detection timeout from 60s to 30s** — most dev servers print their URL in under 10 seconds; the shorter timeout gives faster feedback when something is wrong
+
 ## 0.7.1
 
 1. **Fixed port detection failing when dev servers use ANSI colors** — Vite and other dev servers embed ANSI escape codes inside URLs when `FORCE_COLOR=1` is set (which traforo injects). For example, Vite outputs color codes between `localhost:` and the port number, splitting the string so the port regex never matches and detection times out. Port output is now stripped of all ANSI escape sequences before running the port regex.
