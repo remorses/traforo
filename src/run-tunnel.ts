@@ -144,7 +144,7 @@ async function waitForPort(
 
 async function detectPortFromProcessOutput(
   child: ChildProcess,
-  timeoutMs = 60_000,
+  timeoutMs = 30_000,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     let settled = false
@@ -184,7 +184,13 @@ async function detectPortFromProcessOutput(
     }
 
     const handleExit = (code: number | null) => {
-      fail(new Error(`Command exited with code ${code} before a local port was detected`))
+      fail(
+        new Error(
+          `Command exited with code ${code} before a local port was detected.\n` +
+            `If your server prints the port in an unusual format, use --port to specify it explicitly:\n` +
+            `  traforo -p <port> -- <command>`,
+        ),
+      )
     }
 
     const handleError = (error: Error) => {
@@ -203,7 +209,13 @@ async function detectPortFromProcessOutput(
     child.stderr?.on('data', onStderr)
 
     const timeout = setTimeout(() => {
-      fail(new Error('Timeout waiting for command output to reveal a local port'))
+      fail(
+        new Error(
+          `Timed out after ${timeoutMs / 1000}s waiting for command output to reveal a local port.\n` +
+            `If your server doesn't print a localhost URL, use --port to specify it explicitly:\n` +
+            `  traforo -p <port> -- <command>`,
+        ),
+      )
     }, timeoutMs)
 
     child.on('exit', handleExit)
