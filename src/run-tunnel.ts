@@ -111,7 +111,7 @@ export function detectPortFromText(text: string): number | null {
 async function waitForPort(
   port: number,
   host = 'localhost',
-  timeoutMs = 60_000,
+  timeoutMs = 30_000,
 ): Promise<void> {
   const start = Date.now()
   const checkInterval = 500
@@ -119,7 +119,12 @@ async function waitForPort(
   return new Promise((resolve, reject) => {
     const check = () => {
       if (Date.now() - start > timeoutMs) {
-        reject(new Error(`Timeout waiting for port ${port} to be available`))
+        reject(
+          new Error(
+            `Timed out after ${timeoutMs / 1000}s waiting for port ${port} to accept connections.\n` +
+              `Make sure the server is starting correctly and listening on ${host}:${port}.`,
+          ),
+        )
         return
       }
 
@@ -599,10 +604,9 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
       startedAt: new Date().toISOString(),
     })
   } catch (err) {
-    console.error(
-      'Failed to connect:',
-      err instanceof Error ? err.message : String(err),
-    )
+    const errMsg = err instanceof Error ? err.message : String(err)
+    console.error(`Failed to connect to tunnel server: ${errMsg}`)
+    console.error(`Check your internet connection and try again.`)
     await killChild()
     process.exit(1)
   }

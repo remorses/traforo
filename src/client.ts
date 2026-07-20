@@ -145,7 +145,12 @@ export class TunnelClient {
           try {
             this.ws?.close()
           } catch {}
-          reject(new Error('Timed out waiting for tunnel acceptance'))
+          reject(
+            new Error(
+              'Timed out waiting for tunnel server to accept the connection.\n' +
+                'The tunnel worker may be unresponsive. Try again or check the deployment status.',
+            ),
+          )
         }
       }, 10_000)
 
@@ -186,7 +191,8 @@ export class TunnelClient {
           this.closed = true
           const err = new Error(
             reasonStr ||
-              `Tunnel ID "${this.options.tunnelId}" is already in use by another client`,
+              `Tunnel ID "${this.options.tunnelId}" is already in use by another client.\n` +
+              `Use a different --tunnel-id or omit -t to get a random ID.`,
           )
           if (!accepted) {
             reject(err)
