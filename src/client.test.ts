@@ -5,7 +5,10 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { SocksProxyAgent } from 'socks-proxy-agent'
-import { createWebSocketAgentFromEnv } from './client.js'
+import {
+  createWebSocketAgentFromEnv,
+  formatConnectionMessage,
+} from './client.js'
 
 const PROXY_ENV_KEYS = [
   'ALL_PROXY',
@@ -91,5 +94,40 @@ describe('createWebSocketAgentFromEnv', () => {
     expect(
       createWebSocketAgentFromEnv({ wsUrl: 'wss://traforo.dev/socket' }),
     ).toBeUndefined()
+  })
+})
+
+describe('formatConnectionMessage', () => {
+  test('shows both URLs and directs agents to localhost for local tests', () => {
+    expect(
+      formatConnectionMessage({
+        localUrl: 'http://localhost:3000',
+        tunnelUrl: 'https://example-tunnel.traforo.dev',
+        agent: true,
+      }),
+    ).toMatchInlineSnapshot(`
+      "Connected with Traforo!
+
+      Local:  http://localhost:3000
+      Tunnel: https://example-tunnel.traforo.dev
+
+      NEVER use the tunnel URL for local testing. Use the local URL instead; it is much faster.
+      Always show both URLs to the user. The local URL works when they are on the same machine."
+    `)
+  })
+
+  test('shows both URLs without agent instructions for normal users', () => {
+    expect(
+      formatConnectionMessage({
+        localUrl: 'http://localhost:3000',
+        tunnelUrl: 'https://example-tunnel.traforo.dev',
+        agent: false,
+      }),
+    ).toMatchInlineSnapshot(`
+      "Connected with Traforo!
+
+      Local:  http://localhost:3000
+      Tunnel: https://example-tunnel.traforo.dev"
+    `)
   })
 })

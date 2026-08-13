@@ -407,6 +407,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
         if (sameCwd && sameCmd) {
           // Same command in same directory — tell agent to reuse the tunnel
           console.error(`Error: Port ${port} is already in use\n`)
+          console.error(`  Local:   http://${localHost}:${port}`)
           console.error(`  Tunnel:  ${lock.tunnelUrl}`)
           console.error(`  ID:      ${lock.tunnelId}`)
           console.error(`  Command: ${lock.command ? shellQuote(lock.command) : 'unknown'}`)
@@ -416,7 +417,9 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
           console.error(
             `The same command in the same directory is already tunneled.`,
           )
-          console.error(`Reuse the tunnel URL above instead of creating a new one.`)
+          console.error(
+            `Reuse the URLs above. NEVER use the tunnel URL for local testing; use the local URL instead, it is much faster.`,
+          )
           console.error(
             `If you want to restart it without changing the tunnel URL for existing consumers, run:`,
           )
@@ -425,6 +428,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
         } else {
           // Different command or directory — suggest --kill or reuse
           console.error(`Error: Port ${port} is already in use\n`)
+          console.error(`  Local:   http://${localHost}:${port}`)
           console.error(`  Tunnel:  ${lock.tunnelUrl}`)
           console.error(`  ID:      ${lock.tunnelId}`)
           console.error(`  Command: ${lock.command ? shellQuote(lock.command) : 'unknown'}`)
@@ -432,7 +436,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
           console.error(`  PID:     ${lock.tunnelPid}`)
           console.error(`  Started: ${lock.startedAt}\n`)
           console.error(
-            `Use --kill to terminate the existing process and reuse the tunnel URL:`,
+            `Use --kill to terminate the existing process and reuse the same URLs:`,
           )
           console.error(`  ${restartCommand}`)
           process.exit(1)

@@ -91,6 +91,24 @@ export function createWebSocketAgentFromEnv({
   return new HttpsProxyAgent(proxyUrl)
 }
 
+export function formatConnectionMessage({
+  localUrl,
+  tunnelUrl,
+  agent = isAgent,
+}: {
+  localUrl: string
+  tunnelUrl: string
+  agent?: boolean
+}): string {
+  let message = `Connected with Traforo!\n\nLocal:  ${localUrl}\nTunnel: ${tunnelUrl}`
+  if (agent) {
+    message +=
+      `\n\nNEVER use the tunnel URL for local testing. Use the local URL instead; it is much faster.` +
+      `\nAlways show both URLs to the user. The local URL works when they are on the same machine.`
+  }
+  return message
+}
+
 export class TunnelClient {
   private options: Required<TunnelClientOptions>
   private ws: WebSocket | null = null
@@ -222,14 +240,15 @@ export class TunnelClient {
             if (msg.type === 'upstream_accepted') {
               accepted = true
               clearTimeout(ackTimeout)
-              const { localHost, localPort, localHttps } = this.options
+              const { localPort, localHttps } = this.options
               const localProtocol = localHttps ? 'https' : 'http'
-              const localUrl = `${localProtocol}://${localHost}:${localPort}`
-              let message = `Connected with Traforo!\n${this.url}`
-              if (isAgent) {
-                message += `\n\nUse ${localUrl} directly for lower latency. The tunnel URL is for remote access. Show both URLs to the user.`
-              }
-              console.log(message)
+              const localUrl = `${localProtocol}://localhost:${localPort}`
+              console.log(
+                formatConnectionMessage({
+                  localUrl,
+                  tunnelUrl: this.url,
+                }),
+              )
               this.startPingInterval()
               resolve()
               return

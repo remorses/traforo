@@ -296,6 +296,10 @@ describe('lockfile', () => {
         })
 
       expect(stderr).toContain('The same command in the same directory is already tunneled.')
+      expect(stderr).toContain(`Local:   http://localhost:${port}`)
+      expect(stderr).toContain(
+        'NEVER use the tunnel URL for local testing; use the local URL instead, it is much faster.',
+      )
       expect(stderr).toContain(
         'If you want to restart it without changing the tunnel URL for existing consumers, run:',
       )
