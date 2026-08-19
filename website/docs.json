@@ -1,5 +1,5 @@
 {
-  "$schema": "https://unpkg.com/@holocron.so/vite/src/schema.json",
+  "$schema": "https://holocron.so/docs.json",
   "name": "Traforo",
   "description": "HTTP tunnel via Cloudflare Durable Objects and WebSockets",
   "favicon": "/favicon.ico",
@@ -26,19 +26,19 @@
         {
           "anchor": "GitHub",
           "href": "https://github.com/remorses/traforo",
-          "icon": "github"
+          "icon": "lucide:github"
         },
         {
           "anchor": "npm",
           "href": "https://www.npmjs.com/package/traforo",
-          "icon": "package"
+          "icon": "lucide:package"
         }
       ]
     },
     "groups": [
       {
         "group": "Overview",
-        "icon": "home",
+        "icon": "lucide:home",
         "pages": ["index"]
       }
     ]
