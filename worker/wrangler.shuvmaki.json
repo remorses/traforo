@@ -1,0 +1,35 @@
+{
+  "name": "traforo-shuvmaki",
+  "main": "../src/tunnel.ts",
+  "compatibility_date": "2026-08-25",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TUNNEL_DO",
+        "class_name": "Tunnel"
+      }
+    ]
+  },
+  "ratelimits": [
+    {
+      "name": "TUNNEL_RATE_LIMITER",
+      "namespace_id": "42305",
+      "simple": {
+        "limit": 1000,
+        "period": 60
+      }
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Tunnel"]
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "*-tunnel.shuv.bot/*",
+      "zone_name": "shuv.bot"
+    }
+  ]
+}

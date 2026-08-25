@@ -1,8 +1,27 @@
 import { describe, expect, test } from 'vitest'
 import {
   appendQueryParamPreservingFormatting,
+  extractTunnelId,
   removeQueryParamPreservingFormatting,
 } from './tunnel.js'
+
+describe('extractTunnelId', () => {
+  test.each([
+    ['abc.tunnel.shuv.bot', 'abc'],
+    ['abc-tunnel.shuv.bot', 'abc'],
+    ['abc-tunnel.kimaki.dev', 'abc'],
+    ['abc-tunnel-preview.traforo.dev', 'abc'],
+  ])('extracts %s', (host, expected) => {
+    expect(extractTunnelId(host)).toBe(expected)
+  })
+
+  test.each(['tunnel.shuv.bot', 'abc.shuv.bot', 'abc.tunnel.', 'example.com'])(
+    'rejects %s',
+    (host) => {
+      expect(extractTunnelId(host)).toBeNull()
+    },
+  )
+})
 
 describe('query string preservation', () => {
   test('appends internal params without rewriting bare flags', () => {

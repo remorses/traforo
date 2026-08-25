@@ -26,13 +26,15 @@ import type {
   WsErrorMessage,
 } from './types.js'
 
-type TunnelClientOptions = {
+export type TunnelClientOptions = {
   /** Local port to proxy to */
   localPort: number
   /** Local host (default: localhost) */
   localHost?: string
   /** Base domain for tunnel URLs (default: traforo.dev, override with TRAFORO_BASE_DOMAIN env) */
   baseDomain?: string
+  /** Public URL template containing one {id} placeholder (override with TRAFORO_URL_TEMPLATE env) */
+  urlTemplate?: string
   /** Tunnel server URL (default: wss://{tunnelId}-tunnel.{baseDomain}) */
   serverUrl?: string
   /** Tunnel ID */
@@ -62,6 +64,37 @@ type TunnelClientOptions = {
  * waking the DO from hibernation, so this is zero-cost.
  */
 const PING_INTERVAL_MS = 30_000
+
+export function resolveTunnelUrl({
+  tunnelId,
+  urlTemplate,
+  baseDomain,
+}: {
+  tunnelId: string
+  urlTemplate?: string
+  baseDomain?: string
+}): string {
+  const template =
+    urlTemplate ||
+    process.env.TRAFORO_URL_TEMPLATE ||
+    `https://{id}-tunnel.${baseDomain || process.env.TRAFORO_BASE_DOMAIN || 'traforo.dev'}`
+  if ((template.match(/\{id\}/g) || []).length !== 1) {
+    throw new Error('Tunnel URL template must contain exactly one {id} placeholder')
+  }
+
+  const url = new URL(template.replace('{id}', tunnelId))
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error('Tunnel URL template must be an HTTP(S) origin without credentials, path, query, or hash')
+  }
+  return url.origin
+}
 
 export function createWebSocketAgentFromEnv({
   wsUrl,
@@ -110,7 +143,7 @@ export function formatConnectionMessage({
 }
 
 export class TunnelClient {
-  private options: Required<TunnelClientOptions>
+  private options: Required<TunnelClientOptions> & { tunnelUrl: string }
   private ws: WebSocket | null = null
   private localWsConnections: Map<string, WebSocket> = new Map()
   private closed = false
@@ -119,21 +152,30 @@ export class TunnelClient {
   constructor(options: TunnelClientOptions) {
     const baseDomain =
       options.baseDomain || process.env.TRAFORO_BASE_DOMAIN || 'traforo.dev'
+    const tunnelUrl = resolveTunnelUrl({
+      tunnelId: options.tunnelId,
+      urlTemplate: options.urlTemplate,
+      baseDomain,
+    })
+    const serverUrl = new URL(tunnelUrl)
+    serverUrl.protocol = serverUrl.protocol === 'https:' ? 'wss:' : 'ws:'
     this.options = {
       localHost: 'localhost',
       baseDomain,
-      serverUrl: `wss://${options.tunnelId}-tunnel.${baseDomain}`,
+      urlTemplate: options.urlTemplate || process.env.TRAFORO_URL_TEMPLATE || '',
+      serverUrl: serverUrl.origin,
       localHttps: false,
       autoReconnect: true,
       reconnectDelay: 3000,
       cacheKey: undefined,
       onFatalError: undefined,
       ...options,
-    } as Required<TunnelClientOptions>
+      tunnelUrl,
+    } as Required<TunnelClientOptions> & { tunnelUrl: string }
   }
 
   get url(): string {
-    return `https://${this.options.tunnelId}-tunnel.${this.options.baseDomain}`
+    return this.options.tunnelUrl
   }
 
   async connect(): Promise<void> {

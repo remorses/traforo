@@ -6,7 +6,7 @@ import { exec, spawn, type ChildProcess } from 'node:child_process'
 // calling process.exit(). This prevents orphan processes.
 import net from 'node:net'
 import { promisify } from 'node:util'
-import { TunnelClient } from './client.js'
+import { resolveTunnelUrl, TunnelClient } from './client.js'
 import {
   writeLockfile,
   readLockfile,
@@ -49,6 +49,7 @@ export type RunTunnelOptions = {
   tunnelId?: string
   localHost?: string
   baseDomain?: string
+  urlTemplate?: string
   serverUrl?: string
   command?: string[]
   /** Enable edge caching with optional partition key */
@@ -476,9 +477,11 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   }
 
   // Compute tunnel URL early so it can be injected into the child env
-  const baseDomain =
-    options.baseDomain || process.env.TRAFORO_BASE_DOMAIN || 'traforo.dev'
-  const tunnelUrl = `https://${tunnelId}-tunnel.${baseDomain}`
+  const tunnelUrl = resolveTunnelUrl({
+    tunnelId,
+    urlTemplate: options.urlTemplate,
+    baseDomain: options.baseDomain,
+  })
 
   // If command provided, spawn child process with PORT env
   if (options.command && options.command.length > 0) {
@@ -557,6 +560,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     tunnelId,
     localHost,
     ...(options.baseDomain && { baseDomain: options.baseDomain }),
+    ...(options.urlTemplate && { urlTemplate: options.urlTemplate }),
     ...(options.serverUrl && { serverUrl: options.serverUrl }),
     ...(options.cacheKey && { cacheKey: options.cacheKey }),
     ...(options.password && { password: options.password }),

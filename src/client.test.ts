@@ -8,6 +8,8 @@ import { SocksProxyAgent } from 'socks-proxy-agent'
 import {
   createWebSocketAgentFromEnv,
   formatConnectionMessage,
+  resolveTunnelUrl,
+  TunnelClient,
 } from './client.js'
 
 const PROXY_ENV_KEYS = [
@@ -44,6 +46,42 @@ function resetProxyEnv(): void {
 
 afterEach(() => {
   resetProxyEnv()
+  delete process.env.TRAFORO_URL_TEMPLATE
+})
+
+describe('resolveTunnelUrl', () => {
+  test('resolves a nested tunnel hostname template', () => {
+    expect(
+      resolveTunnelUrl({
+        tunnelId: 'abc',
+        urlTemplate: 'https://{id}.tunnel.shuv.bot',
+      }),
+    ).toBe('https://abc.tunnel.shuv.bot')
+  })
+
+  test('preserves the legacy default', () => {
+    expect(resolveTunnelUrl({ tunnelId: 'abc' })).toBe(
+      'https://abc-tunnel.traforo.dev',
+    )
+  })
+
+  test('uses the environment template', () => {
+    process.env.TRAFORO_URL_TEMPLATE = 'https://{id}.tunnel.shuv.bot'
+    const client = new TunnelClient({ localPort: 3000, tunnelId: 'abc' })
+    expect(client.url).toBe('https://abc.tunnel.shuv.bot')
+  })
+
+  test('rejects malformed templates', () => {
+    expect(() =>
+      resolveTunnelUrl({ tunnelId: 'abc', urlTemplate: 'https://tunnel.shuv.bot' }),
+    ).toThrow('exactly one {id}')
+    expect(() =>
+      resolveTunnelUrl({
+        tunnelId: 'abc',
+        urlTemplate: 'https://{id}.tunnel.shuv.bot/path',
+      }),
+    ).toThrow('HTTP(S) origin')
+  })
 })
 
 describe('createWebSocketAgentFromEnv', () => {

@@ -15,6 +15,7 @@ cli
   )
   .option('-h, --host [host]', 'Local host (default: localhost)')
   .option('-s, --server [url]', 'Tunnel server URL')
+  .option('--url-template [template]', 'Public URL template containing one {id} placeholder')
   .option(
     '-c, --cache [key]',
     'Enable edge caching for static assets (optional key for cache partitioning, default: "default")',
@@ -63,6 +64,7 @@ cli
       tunnelId: options.tunnelId || undefined,
       localHost: options.host || undefined,
       serverUrl: options.server || undefined,
+      urlTemplate: options.urlTemplate || undefined,
       command: command.length > 0 ? command : undefined,
       cacheKey,
       password: options.password,
