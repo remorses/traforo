@@ -1,6 +1,6 @@
 {
   "name": "traforo",
-  "main": "src/tunnel.ts",
+  "main": "../src/tunnel.ts",
   "compatibility_date": "2025-01-01",
   "durable_objects": {
     "bindings": [
