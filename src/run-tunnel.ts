@@ -36,12 +36,19 @@ function shellQuote(args: string[]): string {
 
 const DEFAULT_TUNNEL_ID_BYTES = 10
 
-export function createRandomTunnelId({ port }: { port?: number } = {}): string {
+export function createTunnelId(options: {
+  port?: number
+  tunnelId?: string
+  tuistorySessionId?: string
+} = {}): string {
+  if (options.tunnelId) return options.tunnelId
+  if (options.tuistorySessionId) return options.tuistorySessionId
+
   const randomId = crypto.randomBytes(DEFAULT_TUNNEL_ID_BYTES).toString('hex')
-  if (!port) {
+  if (!options.port) {
     return randomId
   }
-  return `${randomId}-${port}`
+  return `${randomId}-${options.port}`
 }
 
 export type RunTunnelOptions = {
@@ -373,7 +380,11 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
   }
 
   let port = options.port
-  const tunnelId = options.tunnelId || createRandomTunnelId({ port })
+  const tunnelId = createTunnelId({
+    port,
+    tunnelId: options.tunnelId,
+    tuistorySessionId: process.env.TUISTORY_SESSION_ID,
+  })
 
   // Kill existing process on port if requested
   if (options.kill && port) {

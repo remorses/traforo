@@ -5,7 +5,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import {
-  createRandomTunnelId,
+  createTunnelId,
   detectPortFromText,
   parseCommandFromArgv,
   stripAnsi,
@@ -55,10 +55,27 @@ function getTsxPath(): string {
 }
 
 describe('run-tunnel security defaults', () => {
+  test('prefers explicit and restart-scoped tunnel ids before random ids', () => {
+    expect({
+      explicit: createTunnelId({
+        tunnelId: 'public-docs',
+        tuistorySessionId: '0123456789abcdef0123',
+      }),
+      restartScoped: createTunnelId({
+        tuistorySessionId: '0123456789abcdef0123',
+      }),
+    }).toMatchInlineSnapshot(`
+      {
+        "explicit": "public-docs",
+        "restartScoped": "0123456789abcdef0123",
+      }
+    `)
+  })
+
   test('generates a non-guessable default tunnel id with port suffix', () => {
     const ids = new Set(
       Array.from({ length: 32 }, () => {
-        return createRandomTunnelId({ port: 3000 })
+        return createTunnelId({ port: 3000 })
       }),
     )
 
@@ -71,7 +88,7 @@ describe('run-tunnel security defaults', () => {
   test('generates a non-guessable default tunnel id without port suffix when port is omitted', () => {
     const ids = new Set(
       Array.from({ length: 32 }, () => {
-        return createRandomTunnelId()
+        return createTunnelId()
       }),
     )
 

@@ -194,6 +194,20 @@ Or set it in your `.env` / startup script and let traforo override only
 const baseUrl = process.env.APP_URL || process.env.TRAFORO_URL || 'http://localhost:3000'
 ```
 
+### Stable Tuistory Restarts
+
+When traforo runs inside a [tuistory](https://github.com/remorses/tuistory)
+session, it uses tuistory's random `TUISTORY_SESSION_ID` as the default tunnel
+ID. The URL stays the same when the session restarts:
+
+```bash
+tuistory -s app -- traforo -- pnpm dev
+tuistory -s app restart
+```
+
+Closing the session and launching a new one creates a new random URL. An
+explicit `--tunnel-id` still takes priority.
+
 ## Path Inheritance
 
 Package managers like **pnpm** and **bun** prepend `node_modules/.bin` to `PATH`.
