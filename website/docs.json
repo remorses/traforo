@@ -9,6 +9,9 @@
   "appearance": {
     "default": "system"
   },
+  "layout": {
+    "mode": "compact"
+  },
   "icons": {
     "library": "lucide"
   },
