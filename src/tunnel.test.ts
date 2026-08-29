@@ -11,6 +11,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { TunnelClient } from './client.js'
+import { CLOSE_TUNNEL_OFFLINE, CLOSE_UNAUTHORIZED } from './types.js'
 import WebSocket, { WebSocketServer } from 'ws'
 import type { Server } from 'node:http'
 import http from 'node:http'
@@ -1344,7 +1345,99 @@ describe('Tunnel Status and Offline Behavior', () => {
       )
 
       // Public WS waits briefly for upstream, then closes 4008 if none connects
-      expect(closeEvent.code).toBe(4008)
+      expect(closeEvent.code).toBe(CLOSE_TUNNEL_OFFLINE)
+    },
+    TEST_TIMEOUT,
+  )
+
+  test(
+    'public WebSocket waits for upstream then connects',
+    async () => {
+      const waitTunnelId = getTunnelId()
+      const localPort = 29876 + Math.floor(Math.random() * 1000)
+      const serverUrl = `wss://${waitTunnelId}-tunnel-preview.traforo.dev`
+      const wsUrl = `wss://${waitTunnelId}-tunnel-preview.traforo.dev/ws`
+      const testServer = await createTestServer(localPort)
+
+      const ws = new WebSocket(wsUrl)
+      const welcome = new Promise<string>((resolve, reject) => {
+        let settled = false
+        const timeout = setTimeout(() => {
+          if (settled) return
+          settled = true
+          reject(new Error('WebSocket did not open after upstream connected'))
+        }, 10_000)
+        ws.on('message', (data: WebSocket.RawData) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeout)
+          resolve(data.toString())
+        })
+        ws.on('close', (code: number) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeout)
+          reject(new Error(`closed ${code} before upstream connected`))
+        })
+        ws.on('error', () => {})
+      })
+
+      await new Promise((r) => setTimeout(r, 300))
+      const client = new TunnelClient({
+        localPort,
+        tunnelId: waitTunnelId,
+        serverUrl,
+        autoReconnect: false,
+      })
+      await client.connect()
+
+      const parsed = JSON.parse(await welcome) as { type: string }
+      expect(parsed.type).toBe('connected')
+
+      ws.close()
+      client.close()
+      await testServer.close()
+    },
+    TEST_TIMEOUT,
+  )
+
+  test(
+    'waiting public WebSocket still requires password after upstream connects',
+    async () => {
+      const waitTunnelId = getTunnelId()
+      const localPort = 29876 + Math.floor(Math.random() * 1000)
+      const serverUrl = `wss://${waitTunnelId}-tunnel-preview.traforo.dev`
+      const wsUrl = `wss://${waitTunnelId}-tunnel-preview.traforo.dev/ws`
+      const testServer = await createTestServer(localPort)
+
+      const ws = new WebSocket(wsUrl)
+      const closed = new Promise<{ code: number }>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('WebSocket close timeout'))
+        }, 10_000)
+        ws.on('close', (code: number) => {
+          clearTimeout(timeout)
+          resolve({ code })
+        })
+        ws.on('error', () => {})
+      })
+
+      await new Promise((r) => setTimeout(r, 300))
+      const client = new TunnelClient({
+        localPort,
+        tunnelId: waitTunnelId,
+        serverUrl,
+        password: 'secret',
+        autoReconnect: false,
+      })
+      await client.connect()
+
+      const closeEvent = await closed
+      expect(closeEvent.code).toBe(CLOSE_UNAUTHORIZED)
+
+      ws.close()
+      client.close()
+      await testServer.close()
     },
     TEST_TIMEOUT,
   )
