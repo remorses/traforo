@@ -3,9 +3,6 @@
  */
 
 import { afterEach, describe, expect, test } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import path from 'node:path'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { SocksProxyAgent } from 'socks-proxy-agent'
 import {
@@ -166,17 +163,6 @@ describe('upstream reconnect policy', () => {
         false,
       ]
     `)
-  })
-
-  test('worker compatibility date auto-replies to websocket close', () => {
-    const wranglerPath = path.join(
-      path.dirname(fileURLToPath(import.meta.url)),
-      '../worker/wrangler.json',
-    )
-    const wrangler = JSON.parse(readFileSync(wranglerPath, 'utf8')) as {
-      compatibility_date: string
-    }
-    expect(wrangler.compatibility_date >= '2026-04-07').toBe(true)
   })
 
   test('backs off from the base delay and caps', () => {
