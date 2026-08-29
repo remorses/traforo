@@ -8,7 +8,17 @@ import { SocksProxyAgent } from 'socks-proxy-agent'
 import {
   createWebSocketAgentFromEnv,
   formatConnectionMessage,
+  shouldReconnectUpstream,
+  upstreamReconnectDelayMs,
 } from './client.js'
+import {
+  CLOSE_ABNORMAL,
+  CLOSE_INTERNAL_ERROR,
+  CLOSE_MESSAGE_TOO_BIG,
+  CLOSE_SERVICE_RESTART,
+  CLOSE_TUNNEL_ID_IN_USE,
+  CLOSE_TUNNEL_OFFLINE,
+} from './types.js'
 
 const PROXY_ENV_KEYS = [
   'ALL_PROXY',
@@ -128,6 +138,48 @@ describe('formatConnectionMessage', () => {
 
       Local:  http://localhost:3000
       Tunnel: https://example-tunnel.traforo.dev"
+    `)
+  })
+})
+
+describe('upstream reconnect policy', () => {
+  test('reconnects after isolate death and service restart, not when the tunnel id is taken', () => {
+    expect(
+      [
+        shouldReconnectUpstream(CLOSE_ABNORMAL),
+        shouldReconnectUpstream(CLOSE_MESSAGE_TOO_BIG),
+        shouldReconnectUpstream(CLOSE_INTERNAL_ERROR),
+        shouldReconnectUpstream(CLOSE_SERVICE_RESTART),
+        shouldReconnectUpstream(CLOSE_TUNNEL_OFFLINE),
+        shouldReconnectUpstream(CLOSE_TUNNEL_ID_IN_USE),
+      ],
+    ).toMatchInlineSnapshot(`
+      [
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+      ]
+    `)
+  })
+
+  test('backs off from the base delay and caps', () => {
+    expect(
+      [
+        upstreamReconnectDelayMs({ attempt: 0, baseDelayMs: 3000 }),
+        upstreamReconnectDelayMs({ attempt: 1, baseDelayMs: 3000 }),
+        upstreamReconnectDelayMs({ attempt: 2, baseDelayMs: 3000 }),
+        upstreamReconnectDelayMs({ attempt: 4, baseDelayMs: 3000 }),
+      ],
+    ).toMatchInlineSnapshot(`
+      [
+        3000,
+        6000,
+        12000,
+        30000,
+      ]
     `)
   })
 })

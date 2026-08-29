@@ -1343,7 +1343,7 @@ describe('Tunnel Status and Offline Behavior', () => {
         },
       )
 
-      // Should close with code 4008 (Tunnel offline)
+      // Public WS waits briefly for upstream, then closes 4008 if none connects
       expect(closeEvent.code).toBe(4008)
     },
     TEST_TIMEOUT,

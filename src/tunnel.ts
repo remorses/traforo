@@ -7,23 +7,33 @@ import {
   getActiveUpstream,
   isStaleUpstream,
   sendUpstreamMessage,
+  takeWaitersForTunnel,
 } from './upstream-state.js'
-import type {
-  UpstreamMessage,
-  DownstreamMessage,
-  HttpRequestMessage,
-  HttpResponseMessage,
-  HttpResponseStartMessage,
-  HttpResponseChunkMessage,
-  HttpResponseEndMessage,
-  HttpErrorMessage,
-  WsOpenMessage,
-  WsFrameMessage,
-  WsCloseMessage,
-  WsOpenedMessage,
-  WsFrameResponseMessage,
-  WsClosedMessage,
-  WsErrorMessage,
+import {
+  CLOSE_FAILED_TO_CONTACT,
+  CLOSE_INTERNAL_ERROR,
+  CLOSE_LOCAL_TIMEOUT,
+  CLOSE_LOCAL_WS_ERROR,
+  CLOSE_SERVICE_RESTART,
+  CLOSE_TUNNEL_DISCONNECTED,
+  CLOSE_TUNNEL_ID_IN_USE,
+  CLOSE_TUNNEL_OFFLINE,
+  CLOSE_UNAUTHORIZED,
+  type UpstreamMessage,
+  type DownstreamMessage,
+  type HttpRequestMessage,
+  type HttpResponseMessage,
+  type HttpResponseStartMessage,
+  type HttpResponseChunkMessage,
+  type HttpResponseEndMessage,
+  type HttpErrorMessage,
+  type WsOpenMessage,
+  type WsFrameMessage,
+  type WsCloseMessage,
+  type WsOpenedMessage,
+  type WsFrameResponseMessage,
+  type WsClosedMessage,
+  type WsErrorMessage,
 } from './types.js'
 
 // Cloudflare-specific types
@@ -74,6 +84,7 @@ type PendingWsConnection = {
 
 const HTTP_TIMEOUT_MS = 30_000
 const WS_OPEN_TIMEOUT_MS = 10_000
+const WS_UPSTREAM_WAIT_MS = 5_000
 const RATE_LIMIT_PERIOD_SECONDS = 60
 
 export function appendQueryParamPreservingFormatting(
@@ -186,6 +197,14 @@ export class Tunnel {
   private pendingHttpRequests: Map<string, PendingHttpRequest> = new Map()
   private streamingHttpRequests: Map<string, StreamingHttpRequest> = new Map()
   private pendingWsConnections: Map<string, PendingWsConnection> = new Map()
+  private waitingForUpstream: Map<
+    string,
+    {
+      tunnelId: string
+      complete: () => void
+      timeout: ReturnType<typeof setTimeout>
+    }
+  > = new Map()
   /** Cache key for edge caching, null when caching is disabled */
   private cacheKey: string | null = null
   /** Password for tunnel protection, null when no password is set */
@@ -237,6 +256,28 @@ export class Tunnel {
         console.log(`[DO] Handling upstream connection for ${tunnelId}`)
         return this.handleUpstreamConnection(tunnelId, { cacheKey, password })
       }
+      // Wait for upstream before the password check. After isolate restart
+      // getPassword() is empty until the upstream socket is back.
+      if (!this.getUpstream(tunnelId)) {
+        const cameOnline = await this.waitForUpstream(tunnelId)
+        if (!cameOnline) {
+          const protocol = req.headers.get('sec-websocket-protocol')
+          const responseHeaders: Record<string, string> = {}
+          if (protocol) {
+            responseHeaders['Sec-WebSocket-Protocol'] = protocol
+          }
+          const pair = new WebSocketPair()
+          const [client, server] = Object.values(pair)
+          server.accept()
+          server.close(CLOSE_TUNNEL_OFFLINE, 'Tunnel offline')
+          return new Response(null, {
+            status: 101,
+            webSocket: client,
+            headers: responseHeaders,
+          })
+        }
+      }
+
       // User WebSocket connection to be proxied
       // Password check for WebSocket upgrades
       const wsPassword = this.getPassword(tunnelId)
@@ -247,7 +288,7 @@ export class Tunnel {
           const pair = new WebSocketPair()
           const [client, server] = Object.values(pair)
           server.accept()
-          server.close(4013, 'Unauthorized: invalid or missing password')
+          server.close(CLOSE_UNAUTHORIZED, 'Unauthorized: invalid or missing password')
           return new Response(null, { status: 101, webSocket: client })
         }
       }
@@ -399,7 +440,7 @@ export class Tunnel {
       const [client, server] = Object.values(pair)
       server.accept()
       server.close(
-        4409,
+        CLOSE_TUNNEL_ID_IN_USE,
         `Tunnel ID "${tunnelId}" is already in use by another client`,
       )
       return new Response(null, { status: 101, webSocket: client })
@@ -443,7 +484,35 @@ export class Tunnel {
       } catch {}
     }
 
+    this.flushWaitingForUpstream(tunnelId)
+
     return new Response(null, { status: 101, webSocket: client })
+  }
+
+  private flushWaitingForUpstream(tunnelId: string) {
+    for (const waiting of takeWaitersForTunnel(this.waitingForUpstream, tunnelId)) {
+      clearTimeout(waiting.timeout)
+      try {
+        waiting.complete()
+      } catch (err) {
+        console.error(`[DO] Failed to resume waiting WebSocket:`, err)
+      }
+    }
+  }
+
+  private waitForUpstream(tunnelId: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const id = crypto.randomUUID()
+      const timeout = setTimeout(() => {
+        this.waitingForUpstream.delete(id)
+        resolve(false)
+      }, WS_UPSTREAM_WAIT_MS)
+      this.waitingForUpstream.set(id, {
+        tunnelId,
+        timeout,
+        complete: () => resolve(true),
+      })
+    })
   }
 
   private getUpstream(tunnelId: string): WebSocket | null {
@@ -463,7 +532,7 @@ export class Tunnel {
     for (const down of downstreams) {
       try {
         down.send(JSON.stringify({ event: 'upstream_disconnected' }))
-        down.close(1012, 'Upstream disconnected')
+        down.close(CLOSE_SERVICE_RESTART, 'Upstream disconnected')
       } catch {}
     }
 
@@ -484,7 +553,7 @@ export class Tunnel {
     for (const [, pending] of this.pendingWsConnections) {
       clearTimeout(pending.timeout)
       try {
-        pending.userWs.close(4011, 'Tunnel disconnected')
+        pending.userWs.close(CLOSE_TUNNEL_DISCONNECTED, 'Tunnel disconnected')
       } catch {}
     }
     this.pendingWsConnections.clear()
@@ -683,7 +752,7 @@ export class Tunnel {
       const pair = new WebSocketPair()
       const [client, server] = Object.values(pair)
       server.accept()
-      server.close(4008, 'Tunnel offline')
+      server.close(CLOSE_TUNNEL_OFFLINE, 'Tunnel offline')
       return new Response(null, {
         status: 101,
         webSocket: client,
@@ -719,7 +788,7 @@ export class Tunnel {
     }
 
     if (!this.sendToUpstream(tunnelId, upstream, message, `WS ${connId}`)) {
-      server.close(4009, 'Failed to contact tunnel')
+      server.close(CLOSE_FAILED_TO_CONTACT, 'Failed to contact tunnel')
       return new Response(null, {
         status: 101,
         webSocket: client,
@@ -731,7 +800,7 @@ export class Tunnel {
     const timeout = setTimeout(() => {
       this.pendingWsConnections.delete(connId)
       try {
-        server.close(4010, 'Local connection timeout')
+        server.close(CLOSE_LOCAL_TIMEOUT, 'Local connection timeout')
       } catch {}
     }, WS_OPEN_TIMEOUT_MS)
 
@@ -749,26 +818,31 @@ export class Tunnel {
   // ============================================
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
-    const attachment = ws.deserializeAttachment() as Attachment | undefined
-    if (!attachment) {
-      return
-    }
-
-    if (attachment.role === 'upstream') {
-      // Upstream messages are always JSON protocol messages (strings)
-      if (typeof message !== 'string') {
+    try {
+      const attachment = ws.deserializeAttachment() as Attachment | undefined
+      if (!attachment) {
         return
       }
-      this.handleUpstreamMessage(attachment.tunnelId, message)
-    } else if (attachment.role === 'downstream') {
-      // Downstream messages can be text or binary from user WebSockets
-      if (typeof message === 'string') {
-        this.handleDownstreamMessage(attachment.tunnelId, ws, message, false)
-      } else {
-        // Binary message - base64 encode and forward
-        const base64 = arrayBufferToBase64(message)
-        this.handleDownstreamMessage(attachment.tunnelId, ws, base64, true)
+
+      if (attachment.role === 'upstream') {
+        if (typeof message !== 'string') {
+          return
+        }
+        this.handleUpstreamMessage(attachment.tunnelId, message)
+      } else if (attachment.role === 'downstream') {
+        if (typeof message === 'string') {
+          this.handleDownstreamMessage(attachment.tunnelId, ws, message, false)
+        } else {
+          const base64 = arrayBufferToBase64(message)
+          this.handleDownstreamMessage(attachment.tunnelId, ws, base64, true)
+        }
       }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      console.error(`[DO] webSocketMessage error: ${error.message}`)
+      try {
+        ws.close(CLOSE_INTERNAL_ERROR, 'WebSocket error')
+      } catch {}
     }
   }
 
@@ -822,7 +896,7 @@ export class Tunnel {
   async webSocketError(ws: WebSocket, error: unknown) {
     console.error(`[DO] webSocketError: ${error instanceof Error ? error.message : String(error)}`)
     // Treat errors same as close
-    await this.webSocketClose(ws, 1011, 'WebSocket error', false)
+    await this.webSocketClose(ws, CLOSE_INTERNAL_ERROR, 'WebSocket error', false)
   }
 
   // ============================================
@@ -1120,7 +1194,7 @@ export class Tunnel {
     const sockets = this.ctx.getWebSockets(`ws:${msg.connId}`)
     for (const ws of sockets) {
       try {
-        ws.close(4012, msg.error)
+        ws.close(CLOSE_LOCAL_WS_ERROR, msg.error)
       } catch {}
     }
   }

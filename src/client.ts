@@ -7,24 +7,47 @@ import { getProxyForUrl } from 'proxy-from-env'
 import { SocksProxyAgent } from 'socks-proxy-agent'
 import { isAgent } from 'std-env'
 import WebSocket from 'ws'
-import type {
-  UpstreamMessage,
-  DownstreamMessage,
-  ResponseHeaders,
-  HttpRequestMessage,
-  HttpResponseMessage,
-  HttpResponseStartMessage,
-  HttpResponseChunkMessage,
-  HttpResponseEndMessage,
-  HttpErrorMessage,
-  WsOpenMessage,
-  WsFrameMessage,
-  WsCloseMessage,
-  WsOpenedMessage,
-  WsFrameResponseMessage,
-  WsClosedMessage,
-  WsErrorMessage,
+import {
+  CLOSE_ABNORMAL,
+  CLOSE_INTERNAL_ERROR,
+  CLOSE_MESSAGE_TOO_BIG,
+  CLOSE_TUNNEL_ID_IN_USE,
+  type UpstreamMessage,
+  type DownstreamMessage,
+  type ResponseHeaders,
+  type HttpRequestMessage,
+  type HttpResponseMessage,
+  type HttpResponseStartMessage,
+  type HttpResponseChunkMessage,
+  type HttpResponseEndMessage,
+  type HttpErrorMessage,
+  type WsOpenMessage,
+  type WsFrameMessage,
+  type WsCloseMessage,
+  type WsOpenedMessage,
+  type WsFrameResponseMessage,
+  type WsClosedMessage,
+  type WsErrorMessage,
 } from './types.js'
+
+const DEFAULT_RECONNECT_DELAY_MS = 3000
+const MAX_RECONNECT_DELAY_MS = 30_000
+
+export function shouldReconnectUpstream(code: number): boolean {
+  return code !== CLOSE_TUNNEL_ID_IN_USE
+}
+
+export function upstreamReconnectDelayMs({
+  attempt,
+  baseDelayMs,
+  maxDelayMs = MAX_RECONNECT_DELAY_MS,
+}: {
+  attempt: number
+  baseDelayMs: number
+  maxDelayMs?: number
+}): number {
+  return Math.min(baseDelayMs * 2 ** attempt, maxDelayMs)
+}
 
 type TunnelClientOptions = {
   /** Local port to proxy to */
@@ -115,6 +138,7 @@ export class TunnelClient {
   private localWsConnections: Map<string, WebSocket> = new Map()
   private closed = false
   private pingInterval: ReturnType<typeof setInterval> | null = null
+  private reconnectAttempt = 0
 
   constructor(options: TunnelClientOptions) {
     const baseDomain =
@@ -125,7 +149,7 @@ export class TunnelClient {
       serverUrl: `wss://${options.tunnelId}-tunnel.${baseDomain}`,
       localHttps: false,
       autoReconnect: true,
-      reconnectDelay: 3000,
+      reconnectDelay: DEFAULT_RECONNECT_DELAY_MS,
       cacheKey: undefined,
       onFatalError: undefined,
       ...options,
@@ -204,8 +228,7 @@ export class TunnelClient {
         }
         this.localWsConnections.clear()
 
-        // 4409 — tunnel ID is already in use. Do not reconnect.
-        if (code === 4409) {
+        if (!shouldReconnectUpstream(code)) {
           this.closed = true
           const err = new Error(
             reasonStr ||
@@ -220,12 +243,26 @@ export class TunnelClient {
           return
         }
 
-        // Auto-reconnect
         if (this.options.autoReconnect && !this.closed) {
-          console.log(`Reconnecting in ${this.options.reconnectDelay}ms...`)
+          const delayMs = upstreamReconnectDelayMs({
+            attempt: this.reconnectAttempt,
+            baseDelayMs: this.options.reconnectDelay,
+          })
+          this.reconnectAttempt += 1
+          if (
+            code === CLOSE_ABNORMAL ||
+            code === CLOSE_MESSAGE_TOO_BIG ||
+            code === CLOSE_INTERNAL_ERROR
+          ) {
+            console.log(
+              `Tunnel dropped (code ${code}). Isolate may have died. Reconnecting in ${delayMs}ms...`,
+            )
+          } else {
+            console.log(`Reconnecting in ${delayMs}ms...`)
+          }
           setTimeout(() => {
             this.connect().catch(console.error)
-          }, this.options.reconnectDelay)
+          }, delayMs)
         }
       })
 
@@ -239,6 +276,7 @@ export class TunnelClient {
             const msg = JSON.parse(raw) as { type?: string }
             if (msg.type === 'upstream_accepted') {
               accepted = true
+              this.reconnectAttempt = 0
               clearTimeout(ackTimeout)
               const { localPort, localHttps } = this.options
               const localProtocol = localHttps ? 'https' : 'http'
@@ -569,7 +607,11 @@ export class TunnelClient {
       return
     }
 
-    this.ws.send(JSON.stringify(msg))
+    try {
+      this.ws.send(JSON.stringify(msg))
+    } catch (err) {
+      console.error('Failed to send tunnel message:', err)
+    }
   }
 }
 

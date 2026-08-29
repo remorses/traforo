@@ -1,4 +1,20 @@
 // ============================================
+// WebSocket close codes
+// ============================================
+
+export const CLOSE_ABNORMAL = 1006
+export const CLOSE_MESSAGE_TOO_BIG = 1009
+export const CLOSE_INTERNAL_ERROR = 1011
+export const CLOSE_SERVICE_RESTART = 1012
+export const CLOSE_TUNNEL_OFFLINE = 4008
+export const CLOSE_FAILED_TO_CONTACT = 4009
+export const CLOSE_LOCAL_TIMEOUT = 4010
+export const CLOSE_TUNNEL_DISCONNECTED = 4011
+export const CLOSE_LOCAL_WS_ERROR = 4012
+export const CLOSE_UNAUTHORIZED = 4013
+export const CLOSE_TUNNEL_ID_IN_USE = 4409
+
+// ============================================
 // Messages: Worker/DO → Local Client (upstream)
 // ============================================
 

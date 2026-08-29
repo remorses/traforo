@@ -7,6 +7,7 @@ import {
   getActiveUpstream,
   isStaleUpstream,
   sendUpstreamMessage,
+  takeWaitersForTunnel,
   type UpstreamAttachment,
   type UpstreamSocketLike,
 } from './upstream-state.js'
@@ -86,5 +87,19 @@ describe('upstream-state', () => {
     expect(logInfo).toHaveBeenCalledWith(
       '[DO] Ignoring send failure from stale upstream for abc',
     )
+  })
+
+  test('takes only waiters for the tunnel that just came online', () => {
+    const waiters = new Map([
+      ['a', { tunnelId: 'abc', path: '/extension' }],
+      ['b', { tunnelId: 'other', path: '/ws' }],
+      ['c', { tunnelId: 'abc', path: '/hmr' }],
+    ])
+
+    expect(takeWaitersForTunnel(waiters, 'abc')).toEqual([
+      { tunnelId: 'abc', path: '/extension' },
+      { tunnelId: 'abc', path: '/hmr' },
+    ])
+    expect([...waiters.keys()]).toEqual(['b'])
   })
 })

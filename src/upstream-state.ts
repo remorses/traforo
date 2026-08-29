@@ -2,7 +2,7 @@
  * Pure helpers for choosing and sending to the active upstream tunnel socket.
  */
 
-import type { UpstreamMessage } from './types.js'
+import { CLOSE_INTERNAL_ERROR, type UpstreamMessage } from './types.js'
 
 export type UpstreamAttachment = {
   role: 'upstream' | 'downstream'
@@ -46,6 +46,20 @@ export function getActiveUpstream<TSocket extends UpstreamSocketLike>(
   return latest?.socket || null
 }
 
+export function takeWaitersForTunnel<T extends { tunnelId: string }>(
+  waiters: Map<string, T>,
+  tunnelId: string,
+): T[] {
+  const taken: T[] = []
+  for (const [id, waiter] of waiters) {
+    if (waiter.tunnelId === tunnelId) {
+      waiters.delete(id)
+      taken.push(waiter)
+    }
+  }
+  return taken
+}
+
 export function isStaleUpstream<TSocket extends UpstreamSocketLike>(
   sockets: readonly TSocket[],
   tunnelId: string,
@@ -75,7 +89,7 @@ export function sendUpstreamMessage<TSocket extends UpstreamSocketLike>(
     }
 
     try {
-      options.upstream.close(1011, 'Network connection lost')
+      options.upstream.close(CLOSE_INTERNAL_ERROR, 'Network connection lost')
     } catch {}
 
     options.onDisconnect()
