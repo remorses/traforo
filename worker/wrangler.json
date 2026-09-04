@@ -38,10 +38,6 @@
     {
       "pattern": "*-tunnel.kimaki.xyz/*",
       "zone_name": "kimaki.xyz"
-    },
-    {
-      "pattern": "*-tunnel.playwriter.dev/*",
-      "zone_name": "playwriter.dev"
     }
   ],
   "env": {
@@ -76,10 +72,6 @@
         {
           "pattern": "*-tunnel-preview.kimaki.xyz/*",
           "zone_name": "kimaki.xyz"
-        },
-        {
-          "pattern": "*-tunnel-preview.playwriter.dev/*",
-          "zone_name": "playwriter.dev"
         }
       ]
     }
