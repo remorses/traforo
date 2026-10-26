@@ -26,8 +26,7 @@
     }
   ],
   "vars": {
-    "LICENSE_REQUIRED": "false",
-    "POLAR_ORGANIZATION_ID": "0a5fd52e-d5a1-40f9-ab65-3a0b215b9658"
+    "LICENSE_REQUIRED": "false"
   },
   "migrations": [
     {
@@ -52,8 +51,7 @@
   "env": {
     "preview": {
       "vars": {
-        "LICENSE_REQUIRED": "false",
-        "POLAR_ORGANIZATION_ID": "0a5fd52e-d5a1-40f9-ab65-3a0b215b9658"
+        "LICENSE_REQUIRED": "false"
       },
       "durable_objects": {
         "bindings": [

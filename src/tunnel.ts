@@ -45,7 +45,6 @@ export type Env = {
   TUNNEL_RATE_LIMITER: RateLimit
   /** "true" requires a Polar license key to connect an upstream. Unset for self-hosting. */
   LICENSE_REQUIRED?: string
-  POLAR_ORGANIZATION_ID?: string
 }
 
 type Attachment = {
@@ -96,6 +95,10 @@ const LICENSE_CACHE_TTL_SECONDS = 60 * 60
 const POLAR_TIMEOUT_MS = 5_000
 const POLAR_VALIDATE_URL =
   'https://api.polar.sh/v1/customer-portal/license-keys/validate'
+// Polar org "morse" and its "Traforo License Key" benefit. Keys from other
+// products in the same org must not unlock tunnels.
+const POLAR_ORGANIZATION_ID = '0a5fd52e-d5a1-40f9-ab65-3a0b215b9658'
+const POLAR_LICENSE_BENEFIT_ID = '27c5d069-6c5c-406a-8186-7316108da158'
 // WebSocket close reasons are limited to 123 bytes.
 const LICENSE_MISSING_REASON = `Traforo hosted tunnels need a license ($20/month). Buy one at ${LICENSE_URL}`
 const LICENSE_INVALID_REASON = `Traforo license key is invalid, revoked or expired. Buy one at ${LICENSE_URL}`
@@ -1262,24 +1265,19 @@ async function checkLicense({
   if (env.LICENSE_REQUIRED !== 'true') {
     return null
   }
-  const organizationId = env.POLAR_ORGANIZATION_ID
-  if (!organizationId) {
-    console.error('[DO] LICENSE_REQUIRED is set without POLAR_ORGANIZATION_ID, skipping license check')
-    return null
-  }
   if (!key) {
     return LICENSE_MISSING_REASON
   }
 
   const cacheRequest = new Request(
-    `https://license.traforo.internal/${organizationId}/${await sha256Hex(key)}`,
+    `https://license.traforo.internal/${POLAR_LICENSE_BENEFIT_ID}/${await sha256Hex(key)}`,
   )
   const cache = await caches.open('traforo:license').catch(() => null)
   if (await cache?.match(cacheRequest).catch(() => undefined)) {
     return null
   }
 
-  const result = await validateWithPolar({ key, organizationId })
+  const result = await validateWithPolar(key)
   if (result.type === 'unknown') {
     console.error(`[DO] License check failed open: ${result.error}`)
     return null
@@ -1303,17 +1301,11 @@ type PolarValidation =
   | { type: 'invalid' }
   | { type: 'unknown'; error: string }
 
-async function validateWithPolar({
-  key,
-  organizationId,
-}: {
-  key: string
-  organizationId: string
-}): Promise<PolarValidation> {
+async function validateWithPolar(key: string): Promise<PolarValidation> {
   const res = await fetch(POLAR_VALIDATE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key, organization_id: organizationId }),
+    body: JSON.stringify({ key, organization_id: POLAR_ORGANIZATION_ID }),
     signal: AbortSignal.timeout(POLAR_TIMEOUT_MS),
   }).catch((err) => (err instanceof Error ? err : new Error(String(err))))
   if (res instanceof Error) {
@@ -1329,12 +1321,13 @@ async function validateWithPolar({
   }
   const body = (await res.json().catch(() => null)) as {
     status?: string
+    benefit_id?: string
     expires_at?: string | null
   } | null
   if (!body) {
     return { type: 'unknown', error: 'Polar returned invalid JSON' }
   }
-  if (body.status !== 'granted') {
+  if (body.status !== 'granted' || body.benefit_id !== POLAR_LICENSE_BENEFIT_ID) {
     return { type: 'invalid' }
   }
   const expiresAt = body.expires_at ? Date.parse(body.expires_at) : NaN
