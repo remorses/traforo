@@ -184,7 +184,7 @@ The library reads `licenseKey` or `TRAFORO_LICENSE_KEY`, not the CLI's saved key
 
 When license enforcement is enabled, the server closes tunnels without a valid
 key with code `4402`. The client prints where to buy one and does not retry.
-Enforcement is currently disabled on the hosted worker.
+Enforcement is enabled on hosted `traforo.dev` tunnels.
 
 <Aside>
 <Note>
