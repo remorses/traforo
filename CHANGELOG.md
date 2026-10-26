@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.8.0
+
+1. **License keys for hosted tunnels** — buy a key at https://traforo.dev/license ($20/month) and save it once:
+
+   ```bash
+   traforo login <key>
+   traforo -p 3000
+   ```
+
+   The key is saved with owner-only permissions, scoped to the tunnel server, and reused on every run. `TRAFORO_LICENSE_KEY` overrides it (useful in CI). Library users pass `licenseKey` to `TunnelClient` or `runTunnel`. For a custom server, pass the same `--server` to `login` and the tunnel command.
+
+   When a server requires a key and it is missing or invalid, it closes the tunnel with code **4402**. The client prints the buy link and does not reconnect; `connect()` rejects with `TunnelRejectedError`. Enforcement is off on the hosted worker for now, and self-hosted workers only check keys when `LICENSE_REQUIRED` is `"true"`.
+
+2. **Same tunnel URL across tuistory restarts** — without `--tunnel-id`, traforo uses tuistory's `TUISTORY_SESSION_ID`, so `tuistory -s app restart` keeps the URL. A new session still gets a new random URL.
+
+3. **Both local and tunnel URLs shown after connecting**:
+
+   ```
+   Connected with Traforo!
+
+   Local:  http://localhost:3000
+   Tunnel: https://example-tunnel.traforo.dev
+   ```
+
+4. **Reconnect after the tunnel isolate dies** — the CLI reconnects on close codes 1006, 1009 and 1011 with backoff (3s, 6s, 12s, up to 30s). Public WebSockets wait up to 5 seconds for the local client before closing with **4008 Tunnel offline**. A refused reconnect (tunnel ID taken, license revoked) now exits through `onFatalError` instead of leaving the client silently closed.
+
+5. **Clean WebSocket closes** — normal disconnects no longer show up as **1006**; that code now only means the isolate actually died.
+
+6. **`traforo completions install`** and a correct `traforo --version`.
+
 ## 0.7.2
 
 1. **Better error messages with recovery hints** — all timeout and connection errors now include actionable suggestions instead of generic messages:
