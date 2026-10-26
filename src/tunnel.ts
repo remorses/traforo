@@ -12,6 +12,7 @@ import {
 import {
   CLOSE_FAILED_TO_CONTACT,
   CLOSE_INTERNAL_ERROR,
+  CLOSE_LICENSE_REQUIRED,
   CLOSE_LOCAL_TIMEOUT,
   CLOSE_LOCAL_WS_ERROR,
   CLOSE_SERVICE_RESTART,
@@ -19,6 +20,8 @@ import {
   CLOSE_TUNNEL_ID_IN_USE,
   CLOSE_TUNNEL_OFFLINE,
   CLOSE_UNAUTHORIZED,
+  LICENSE_KEY_HEADER,
+  LICENSE_URL,
   type UpstreamMessage,
   type DownstreamMessage,
   type HttpRequestMessage,
@@ -40,6 +43,9 @@ import {
 export type Env = {
   TUNNEL_DO: DurableObjectNamespace
   TUNNEL_RATE_LIMITER: RateLimit
+  /** "true" requires a Polar license key to connect an upstream. Unset for self-hosting. */
+  LICENSE_REQUIRED?: string
+  POLAR_ORGANIZATION_ID?: string
 }
 
 type Attachment = {
@@ -86,6 +92,13 @@ const HTTP_TIMEOUT_MS = 30_000
 const WS_OPEN_TIMEOUT_MS = 10_000
 const WS_UPSTREAM_WAIT_MS = 5_000
 const RATE_LIMIT_PERIOD_SECONDS = 60
+const LICENSE_CACHE_TTL_SECONDS = 60 * 60
+const POLAR_TIMEOUT_MS = 5_000
+const POLAR_VALIDATE_URL =
+  'https://api.polar.sh/v1/customer-portal/license-keys/validate'
+// WebSocket close reasons are limited to 123 bytes.
+const LICENSE_MISSING_REASON = `Traforo hosted tunnels need a license ($20/month). Buy one at ${LICENSE_URL}`
+const LICENSE_INVALID_REASON = `Traforo license key is invalid, revoked or expired. Buy one at ${LICENSE_URL}`
 
 export function appendQueryParamPreservingFormatting(
   url: string,
@@ -269,6 +282,20 @@ export class Tunnel {
         // protection or caching on the live tunnel.
         const cacheKey = url.searchParams.get('_cacheKey') || null
         const password = url.searchParams.get('_password') || null
+        // Check before handleUpstreamConnection: its in-use check and accept
+        // must run without an await in between.
+        const licenseError = await checkLicense({
+          env: this.env,
+          key: req.headers.get(LICENSE_KEY_HEADER)?.trim() || null,
+        })
+        if (licenseError) {
+          console.log(`[DO] Tunnel ${tunnelId}: rejected — ${licenseError}`)
+          const pair = new WebSocketPair()
+          const [client, server] = Object.values(pair)
+          server.accept()
+          server.close(CLOSE_LICENSE_REQUIRED, licenseError)
+          return new Response(null, { status: 101, webSocket: client })
+        }
         console.log(`[DO] Handling upstream connection for ${tunnelId}`)
         return this.handleUpstreamConnection(tunnelId, { cacheKey, password })
       }
@@ -1214,6 +1241,123 @@ export class Tunnel {
       } catch {}
     }
   }
+}
+
+// ============================================
+// License keys
+// ============================================
+
+/**
+ * Returns a close reason when the upstream must be rejected, null when it may
+ * connect. Valid keys are cached for an hour. Fails open when Polar is down or
+ * the worker is misconfigured, so an outage never takes paying tunnels down.
+ */
+async function checkLicense({
+  env,
+  key,
+}: {
+  env: Env
+  key: string | null
+}): Promise<string | null> {
+  if (env.LICENSE_REQUIRED !== 'true') {
+    return null
+  }
+  const organizationId = env.POLAR_ORGANIZATION_ID
+  if (!organizationId) {
+    console.error('[DO] LICENSE_REQUIRED is set without POLAR_ORGANIZATION_ID, skipping license check')
+    return null
+  }
+  if (!key) {
+    return LICENSE_MISSING_REASON
+  }
+
+  const cacheRequest = new Request(
+    `https://license.traforo.internal/${organizationId}/${await sha256Hex(key)}`,
+  )
+  const cache = await caches.open('traforo:license').catch(() => null)
+  if (await cache?.match(cacheRequest).catch(() => undefined)) {
+    return null
+  }
+
+  const result = await validateWithPolar({ key, organizationId })
+  if (result.type === 'unknown') {
+    console.error(`[DO] License check failed open: ${result.error}`)
+    return null
+  }
+  if (result.type === 'invalid') {
+    return LICENSE_INVALID_REASON
+  }
+  await cache
+    ?.put(
+      cacheRequest,
+      new Response('valid', {
+        headers: { 'Cache-Control': `max-age=${result.ttlSeconds}` },
+      }),
+    )
+    .catch((err: unknown) => console.error(`[DO] License cache store error:`, err))
+  return null
+}
+
+type PolarValidation =
+  | { type: 'valid'; ttlSeconds: number }
+  | { type: 'invalid' }
+  | { type: 'unknown'; error: string }
+
+async function validateWithPolar({
+  key,
+  organizationId,
+}: {
+  key: string
+  organizationId: string
+}): Promise<PolarValidation> {
+  const res = await fetch(POLAR_VALIDATE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, organization_id: organizationId }),
+    signal: AbortSignal.timeout(POLAR_TIMEOUT_MS),
+  }).catch((err) => (err instanceof Error ? err : new Error(String(err))))
+  if (res instanceof Error) {
+    return { type: 'unknown', error: res.message }
+  }
+  // 404 means not found, revoked, disabled or expired. Anything else that is
+  // not 2xx (422 from a bad organization id, 429, 5xx) is our or Polar's problem.
+  if (res.status === 404) {
+    return { type: 'invalid' }
+  }
+  if (!res.ok) {
+    return { type: 'unknown', error: `Polar responded ${res.status}` }
+  }
+  const body = (await res.json().catch(() => null)) as {
+    status?: string
+    expires_at?: string | null
+  } | null
+  if (!body) {
+    return { type: 'unknown', error: 'Polar returned invalid JSON' }
+  }
+  if (body.status !== 'granted') {
+    return { type: 'invalid' }
+  }
+  const expiresAt = body.expires_at ? Date.parse(body.expires_at) : NaN
+  const secondsLeft = Number.isNaN(expiresAt)
+    ? LICENSE_CACHE_TTL_SECONDS
+    : Math.floor((expiresAt - Date.now()) / 1000)
+  if (secondsLeft <= 0) {
+    return { type: 'invalid' }
+  }
+  return {
+    type: 'valid',
+    ttlSeconds: Math.min(secondsLeft, LICENSE_CACHE_TTL_SECONDS),
+  }
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(text),
+  )
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 // ============================================

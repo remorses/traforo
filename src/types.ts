@@ -12,7 +12,16 @@ export const CLOSE_LOCAL_TIMEOUT = 4010
 export const CLOSE_TUNNEL_DISCONNECTED = 4011
 export const CLOSE_LOCAL_WS_ERROR = 4012
 export const CLOSE_UNAUTHORIZED = 4013
+export const CLOSE_LICENSE_REQUIRED = 4402
 export const CLOSE_TUNNEL_ID_IN_USE = 4409
+
+// ============================================
+// License keys (only enforced when the worker sets LICENSE_REQUIRED)
+// ============================================
+
+/** Redirects to the checkout page, so the target can change without a client release. */
+export const LICENSE_URL = 'https://traforo.dev/license'
+export const LICENSE_KEY_HEADER = 'x-traforo-license'
 
 // ============================================
 // Messages: Worker/DO → Local Client (upstream)
