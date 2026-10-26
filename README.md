@@ -156,6 +156,43 @@ instructions to pass the password as a cookie:
 curl -b 'traforo-password=mysecret' https://{tunnel-id}-tunnel.traforo.dev
 ```
 
+## License Key
+
+Hosted **license keys** cost $20/month. Buy one at
+https://traforo.dev/license, then save it once:
+
+```bash
+traforo login <key>
+traforo -p 3000
+traforo -- pnpm dev
+```
+
+The CLI saves your key locally with owner-only file permissions and reuses it
+on future runs. Run `traforo login <new-key>` to replace it. For CI, set
+`TRAFORO_LICENSE_KEY` instead; it takes priority over the saved key.
+
+Saved keys are scoped to the server. Use the same `--server` option when
+logging in and opening tunnels against a custom server:
+
+```bash
+traforo login <key> --server wss://tunnel.example.com
+traforo -p 3000 --server wss://tunnel.example.com
+```
+
+`TRAFORO_BASE_DOMAIN` also selects a separate saved key for each domain.
+The library reads `licenseKey` or `TRAFORO_LICENSE_KEY`, not the CLI's saved key.
+
+When license enforcement is enabled, the server closes tunnels without a valid
+key with code `4402`. The client prints where to buy one and does not retry.
+Enforcement is currently disabled on the hosted worker.
+
+<Aside>
+<Note>
+**Self-hosted** instances never ask for a key. Checks only run when the worker
+sets `LICENSE_REQUIRED` to `"true"` (see [Self-Hosting](#self-hosting)).
+</Note>
+</Aside>
+
 ## TRAFORO_URL Environment Variable
 
 When you run a command after `--`, traforo injects **`TRAFORO_URL`** into the
@@ -322,6 +359,7 @@ const client = new TunnelClient({
   tunnelId: 'my-app',
   cacheKey: 'v1',       // optional: enable edge caching
   password: 'mysecret', // optional: password protection
+  licenseKey: 'key',    // optional: default TRAFORO_LICENSE_KEY
 })
 
 await client.connect()
@@ -360,6 +398,11 @@ Edit `worker/wrangler.json` and replace the routes with your domain:
   ]
 }
 ```
+
+Keep `"LICENSE_REQUIRED": "false"` in `vars`. With `"true"` the worker checks
+the hosted Traforo **Polar** license benefit (IDs hardcoded in `src/tunnel.ts`) on every
+tunnel connect (valid keys are cached for an hour; if Polar is down, the tunnel
+connects anyway).
 
 ### 3. Add a wildcard DNS record
 

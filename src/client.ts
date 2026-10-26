@@ -10,8 +10,11 @@ import WebSocket from 'ws'
 import {
   CLOSE_ABNORMAL,
   CLOSE_INTERNAL_ERROR,
+  CLOSE_LICENSE_REQUIRED,
   CLOSE_MESSAGE_TOO_BIG,
   CLOSE_TUNNEL_ID_IN_USE,
+  LICENSE_KEY_HEADER,
+  LICENSE_URL,
   type UpstreamMessage,
   type DownstreamMessage,
   type ResponseHeaders,
@@ -34,7 +37,40 @@ const DEFAULT_RECONNECT_DELAY_MS = 3000
 const MAX_RECONNECT_DELAY_MS = 30_000
 
 export function shouldReconnectUpstream(code: number): boolean {
-  return code !== CLOSE_TUNNEL_ID_IN_USE
+  return code !== CLOSE_TUNNEL_ID_IN_USE && code !== CLOSE_LICENSE_REQUIRED
+}
+
+/** The tunnel server refused the upstream for good (tunnel ID taken, missing license). */
+export class TunnelRejectedError extends Error {
+  code: number
+
+  constructor({ code, message }: { code: number; message: string }) {
+    super(message)
+    this.name = 'TunnelRejectedError'
+    this.code = code
+  }
+}
+
+export function upstreamRejectionMessage({
+  code,
+  reason,
+  tunnelId,
+}: {
+  code: number
+  reason: string
+  tunnelId: string
+}): string {
+  if (code === CLOSE_LICENSE_REQUIRED) {
+    // The server owns the price and buy link; the CLI saves the key separately.
+    const why =
+      reason || `Traforo hosted tunnels need a license. Buy one at ${LICENSE_URL}`
+    return `${why}\nRun traforo login <key> once, or set TRAFORO_LICENSE_KEY.`
+  }
+  return (
+    reason ||
+    `Tunnel ID "${tunnelId}" is already in use by another client.\n` +
+      `Use a different --tunnel-id or omit -t to get a random ID.`
+  )
 }
 
 export function upstreamReconnectDelayMs({
@@ -70,10 +106,13 @@ type TunnelClientOptions = {
   cacheKey?: string
   /** Password to protect the tunnel */
   password?: string
+  /** License key for hosted tunnels (default: TRAFORO_LICENSE_KEY env) */
+  licenseKey?: string
   /**
-   * Called when the connection fails with an unrecoverable error (e.g.
-   * code 4409 — tunnel ID already in use). The client sets `closed = true`
-   * and will not attempt to reconnect before calling this callback.
+   * Called when a reconnect fails with an unrecoverable error (e.g. code
+   * 4409, tunnel ID already in use, or 4402, missing license). The client
+   * sets `closed = true` and will not reconnect. The first connect() rejects
+   * with a TunnelRejectedError instead.
    */
   onFatalError?: (error: Error) => void
 }
@@ -153,6 +192,7 @@ export class TunnelClient {
       cacheKey: undefined,
       onFatalError: undefined,
       ...options,
+      licenseKey: options.licenseKey || process.env.TRAFORO_LICENSE_KEY,
     } as Required<TunnelClientOptions>
   }
 
@@ -196,8 +236,11 @@ export class TunnelClient {
         }
       }, 10_000)
 
+      const { licenseKey } = this.options
       this.ws = new WebSocket(wsUrl, {
         agent: createWebSocketAgentFromEnv({ wsUrl }),
+        // Header, not query param, so the key stays out of request logs.
+        ...(licenseKey && { headers: { [LICENSE_KEY_HEADER]: licenseKey } }),
       })
 
       this.ws.on('open', () => {
@@ -205,7 +248,7 @@ export class TunnelClient {
         // Wait for the upstream_accepted ACK before resolving.
       })
 
-      this.ws.on('error', (err: Error) => {
+      this.ws.on('error', (err) => {
         console.error('WebSocket error:', err.message)
         if (!accepted) {
           clearTimeout(ackTimeout)
@@ -213,7 +256,7 @@ export class TunnelClient {
         }
       })
 
-      this.ws.on('close', (code: number, reason: Buffer) => {
+      this.ws.on('close', (code, reason) => {
         const reasonStr = reason.toString()
         console.log(`Disconnected: ${code} ${reasonStr}`)
         clearTimeout(ackTimeout)
@@ -230,11 +273,14 @@ export class TunnelClient {
 
         if (!shouldReconnectUpstream(code)) {
           this.closed = true
-          const err = new Error(
-            reasonStr ||
-              `Tunnel ID "${this.options.tunnelId}" is already in use by another client.\n` +
-              `Use a different --tunnel-id or omit -t to get a random ID.`,
-          )
+          const err = new TunnelRejectedError({
+            code,
+            message: upstreamRejectionMessage({
+              code,
+              reason: reasonStr,
+              tunnelId: this.options.tunnelId,
+            }),
+          })
           if (!accepted) {
             reject(err)
           } else {
@@ -261,12 +307,19 @@ export class TunnelClient {
             console.log(`Reconnecting in ${delayMs}ms...`)
           }
           setTimeout(() => {
-            this.connect().catch(console.error)
+            this.connect().catch((err) => {
+              // A reconnect can be refused too (license revoked meanwhile).
+              if (err instanceof TunnelRejectedError) {
+                this.options.onFatalError?.(err)
+                return
+              }
+              console.error(err)
+            })
           }, delayMs)
         }
       })
 
-      this.ws.on('message', (data: WebSocket.RawData) => {
+      this.ws.on('message', (data) => {
         const raw = data.toString()
 
         // Handle the upstream_accepted ACK — resolve connect() and start
@@ -349,7 +402,7 @@ export class TunnelClient {
 
     switch (msg.type) {
       case 'http_request':
-        this.handleHttpRequest(msg)
+        void this.handleHttpRequest(msg)
         break
       case 'ws_open':
         this.handleWsOpen(msg)
@@ -514,7 +567,7 @@ export class TunnelClient {
         this.send(opened)
       })
 
-      localWs.on('error', (err: Error) => {
+      localWs.on('error', (err) => {
         console.error(`WS ERROR ${msg.connId}:`, err.message)
 
         const errorMsg: WsErrorMessage = {
@@ -527,7 +580,7 @@ export class TunnelClient {
         this.localWsConnections.delete(msg.connId)
       })
 
-      localWs.on('close', (code: number, reason: Buffer) => {
+      localWs.on('close', (code, reason) => {
         console.log(`WS CLOSED ${msg.connId}: ${code} ${reason.toString()}`)
 
         const closed: WsClosedMessage = {
@@ -541,7 +594,7 @@ export class TunnelClient {
         this.localWsConnections.delete(msg.connId)
       })
 
-      localWs.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
+      localWs.on('message', (data, isBinary) => {
         const dataBuffer = rawDataToBuffer(data)
         const frameData = isBinary
           ? dataBuffer.toString('base64')

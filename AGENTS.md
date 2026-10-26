@@ -1,5 +1,13 @@
 # Traforo Agent Instructions
 
+## Architecture
+
+- `src/cli.ts` owns CLI commands and loads saved credentials before starting a tunnel.
+- `src/license.ts` owns atomic, owner-only license config in `TRAFORO_HOME` or `~/.traforo`, scoped by server URL.
+- `src/run-tunnel.ts` owns child processes and tunnel startup; `src/client.ts` owns local HTTP and WebSocket forwarding.
+- `src/tunnel.ts` owns the Worker and Durable Object; `website/` serves docs and the checkout redirect.
+- Library clients use explicit keys or the environment, never the CLI's saved config.
+
 ## Cloudflare Durable Object Hibernation
 
 **Class fields do not survive hibernation.** When a DO hibernates between requests, the runtime reconstructs the class from scratch — all in-memory properties reset to their constructor defaults. Only these survive:

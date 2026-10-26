@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { goke } from 'goke'
-import { CLI_NAME, runTunnel, parseCommandFromArgv } from './run-tunnel.js'
+import { createRequire } from 'node:module'
+import { CLI_NAME, runTunnel, parseCommandFromArgv } from './run-tunnel.ts'
+import { licenseServer, readLicense, saveLicense } from './license.ts'
+
+const CONFIG_TIMEOUT_MS = 5_000
+const packageJson = createRequire(import.meta.url)('../package.json') as { version: string }
 
 const { command, argv } = parseCommandFromArgv(process.argv)
 
@@ -58,6 +63,22 @@ cli
     // --cache bare (`''`) → 'default', --cache v2 → 'v2', omitted → undefined
     const cacheKey = options.cache === '' ? 'default' : options.cache || undefined
 
+    const server = licenseServer(options.server)
+    if (server instanceof Error) {
+      console.error(server.message)
+      process.exitCode = 1
+      return
+    }
+    const licenseKey = process.env.TRAFORO_LICENSE_KEY || await readLicense({
+      server,
+      signal: AbortSignal.timeout(CONFIG_TIMEOUT_MS),
+    })
+    if (licenseKey instanceof Error) {
+      console.error(licenseKey.message)
+      process.exitCode = 1
+      return
+    }
+
     await runTunnel({
       port,
       tunnelId: options.tunnelId || undefined,
@@ -66,12 +87,34 @@ cli
       command: command.length > 0 ? command : undefined,
       cacheKey,
       password: options.password,
+      licenseKey: licenseKey || undefined,
       kill: options.kill,
     })
   })
 
+cli
+  .command('login <key>', 'Save your license key once for future tunnels. Buy one at https://traforo.dev/license')
+  .option('-s, --server [url]', 'Tunnel server URL (must match the tunnel command)')
+  .example('traforo login <key>')
+  .action(async (key, options) => {
+    const server = licenseServer(options.server)
+    if (server instanceof Error) {
+      console.error(server.message)
+      process.exitCode = 1
+      return
+    }
+    const result = await saveLicense({ server, key, signal: AbortSignal.timeout(CONFIG_TIMEOUT_MS) })
+    if (result instanceof Error) {
+      console.error(result.message)
+      process.exitCode = 1
+      return
+    }
+    console.log('License saved. Future tunnels use it automatically.')
+  })
+
 cli.help()
-cli.version('0.0.1')
+cli.completions()
+cli.version(packageJson.version)
 
 // Parse the modified argv (without the command after --)
-cli.parse(argv)
+await cli.parse(argv)

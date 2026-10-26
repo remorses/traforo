@@ -5,15 +5,20 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { SocksProxyAgent } from 'socks-proxy-agent'
+import type { AddressInfo } from 'node:net'
+import { WebSocketServer } from 'ws'
 import {
   createWebSocketAgentFromEnv,
   formatConnectionMessage,
   shouldReconnectUpstream,
+  TunnelClient,
+  TunnelRejectedError,
   upstreamReconnectDelayMs,
 } from './client.js'
 import {
   CLOSE_ABNORMAL,
   CLOSE_INTERNAL_ERROR,
+  CLOSE_LICENSE_REQUIRED,
   CLOSE_MESSAGE_TOO_BIG,
   CLOSE_SERVICE_RESTART,
   CLOSE_TUNNEL_ID_IN_USE,
@@ -152,6 +157,7 @@ describe('upstream reconnect policy', () => {
         shouldReconnectUpstream(CLOSE_SERVICE_RESTART),
         shouldReconnectUpstream(CLOSE_TUNNEL_OFFLINE),
         shouldReconnectUpstream(CLOSE_TUNNEL_ID_IN_USE),
+        shouldReconnectUpstream(CLOSE_LICENSE_REQUIRED),
       ],
     ).toMatchInlineSnapshot(`
       [
@@ -160,6 +166,7 @@ describe('upstream reconnect policy', () => {
         true,
         true,
         true,
+        false,
         false,
       ]
     `)
@@ -181,5 +188,71 @@ describe('upstream reconnect policy', () => {
         30000,
       ]
     `)
+  })
+})
+
+describe('license rejection', () => {
+  test('connect() rejects with a readable error when the server refuses the license', async () => {
+    PROXY_ENV_KEYS.forEach((key) => {
+      delete process.env[key]
+    })
+    const originalLicenseEnv = process.env.TRAFORO_LICENSE_KEY
+    delete process.env.TRAFORO_LICENSE_KEY
+
+    // Plays the Durable Object: accepts only the key "good".
+    const server = new WebSocketServer({ port: 0, host: '127.0.0.1' })
+    await new Promise((resolve) => server.once('listening', resolve))
+    const seenKeys: Array<string | string[] | undefined> = []
+    server.on('connection', (ws, req) => {
+      const key = req.headers['x-traforo-license']
+      seenKeys.push(key)
+      if (key === 'good') {
+        ws.send(JSON.stringify({ type: 'upstream_accepted' }))
+        return
+      }
+      ws.close(
+        CLOSE_LICENSE_REQUIRED,
+        'Traforo hosted tunnels need a license ($20/month). Buy one at https://traforo.dev/license',
+      )
+    })
+    const serverUrl = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`
+
+    const connect = async (licenseKey?: string) => {
+      const client = new TunnelClient({ localPort: 1, tunnelId: 'test', serverUrl, licenseKey })
+      const result = await client.connect().then(
+        () => 'connected',
+        (err: unknown) => err,
+      )
+      client.close()
+      return result
+    }
+
+    try {
+      const missing = await connect()
+      const good = await connect('good')
+
+      if (!(missing instanceof TunnelRejectedError)) {
+        throw new Error(`expected TunnelRejectedError, got ${String(missing)}`)
+      }
+      expect(missing.message).toMatchInlineSnapshot(`
+        "Traforo hosted tunnels need a license ($20/month). Buy one at https://traforo.dev/license
+        Run traforo login <key> once, or set TRAFORO_LICENSE_KEY."
+      `)
+      expect({ code: missing.code, good, seenKeys }).toMatchInlineSnapshot(`
+        {
+          "code": 4402,
+          "good": "connected",
+          "seenKeys": [
+            undefined,
+            "good",
+          ],
+        }
+      `)
+    } finally {
+      server.close()
+      if (originalLicenseEnv !== undefined) {
+        process.env.TRAFORO_LICENSE_KEY = originalLicenseEnv
+      }
+    }
   })
 })

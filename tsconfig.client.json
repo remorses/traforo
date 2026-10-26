@@ -9,6 +9,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
+    "rewriteRelativeImportExtensions": true,
     "types": ["node"],
     "lib": ["ES2022"]
   },

@@ -6,7 +6,7 @@ import { exec, spawn, type ChildProcess } from 'node:child_process'
 // calling process.exit(). This prevents orphan processes.
 import net from 'node:net'
 import { promisify } from 'node:util'
-import { TunnelClient } from './client.js'
+import { TunnelClient, TunnelRejectedError } from './client.js'
 import {
   writeLockfile,
   readLockfile,
@@ -62,6 +62,8 @@ export type RunTunnelOptions = {
   cacheKey?: string
   /** Password to protect the tunnel */
   password?: string
+  /** License key for hosted tunnels (default: TRAFORO_LICENSE_KEY env) */
+  licenseKey?: string
   /** Kill any existing process on the port before starting */
   kill?: boolean
 }
@@ -571,9 +573,10 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     ...(options.serverUrl && { serverUrl: options.serverUrl }),
     ...(options.cacheKey && { cacheKey: options.cacheKey }),
     ...(options.password && { password: options.password }),
+    ...(options.licenseKey && { licenseKey: options.licenseKey }),
     onFatalError: (err) => {
       console.error(`\nError: ${err.message}`)
-      killChild().then(() => process.exit(1))
+      void killChild().then(() => process.exit(1))
     },
   })
 
@@ -597,7 +600,7 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
     console.log('\nShutting down...')
     removeLockfile(port, process.pid)
     client.close()
-    killChild(signal).then(() => process.exit(0))
+    void killChild(signal).then(() => process.exit(0))
   }
 
   process.on('SIGINT', () => cleanup('SIGINT'))
@@ -619,9 +622,13 @@ export async function runTunnel(options: RunTunnelOptions): Promise<void> {
       startedAt: new Date().toISOString(),
     })
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err)
-    console.error(`Failed to connect to tunnel server: ${errMsg}`)
-    console.error(`Check your internet connection and try again.`)
+    if (err instanceof TunnelRejectedError) {
+      console.error(`\nError: ${err.message}`)
+    } else {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      console.error(`Failed to connect to tunnel server: ${errMsg}`)
+      console.error(`Check your internet connection and try again.`)
+    }
     await killChild()
     process.exit(1)
   }

@@ -54,7 +54,8 @@
     "wrangler": "^4.24.3"
   },
   "dependencies": {
-    "goke": "^6.8.0",
+    "errore": "^0.14.1",
+    "goke": "^6.17.0",
     "http-cache-semantics": "^4.2.0",
     "https-proxy-agent": "^7.0.6",
     "proxy-from-env": "^2.1.0",
