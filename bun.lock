@@ -6,7 +6,7 @@
       "name": "traforo",
       "dependencies": {
         "errore": "^0.14.1",
-        "goke": "^6.17.0",
+        "goke": "^6.18.0",
         "http-cache-semantics": "^4.2.0",
         "https-proxy-agent": "^7.0.6",
         "proxy-from-env": "^2.1.0",
@@ -285,7 +285,7 @@
 
     "get-tsconfig": ["get-tsconfig@4.14.0", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-yTb+8DXzDREzgvYmh6s9vHsSVCHeC0G3PI5bEXNBHtmshPnO+S5O7qgLEOn0I5QvMy6kpZN8K1NKGyilLb93wA=="],
 
-    "goke": ["goke@6.17.0", "", {}, "sha512-mSyMJ0TaMgkuypy1NVJ4YvxM1XnZQ2RvfDyry6IcCIU0lfKm0/wdk+OhC1hkIMfvvRmSpONqxifGNCd0JuPl0w=="],
+    "goke": ["goke@6.18.0", "", {}, "sha512-50yQYkbPtevovbdSk0faBAAzo9ph3ndgnMRu2eONZy/5/JHXeSpfHTw/w0PGZlqu6W3CtenhZjNf/x2xnbiIVw=="],
 
     "http-cache-semantics": ["http-cache-semantics@4.2.0", "", {}, "sha512-dTxcvPXqPvXBQpq5dUr6mEMJX4oIEFv6bwom3FDwKRDsuIjjJGANqhBuoAn9c1RQJIdAKav33ED65E2ys+87QQ=="],
 
